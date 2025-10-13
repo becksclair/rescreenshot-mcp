@@ -34,6 +34,9 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 # Date/time for timestamps
 chrono = "0.4"
 
+# Base64 encoding (for MCP image content)
+base64 = "0.22"
+
 # Image processing (for future milestones)
 image = { version = "0.25", features = ["png", "jpeg", "webp"], optional = true }
 tempfile = { version = "3.10", optional = true }
