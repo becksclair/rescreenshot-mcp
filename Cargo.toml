@@ -37,6 +37,13 @@ chrono = "0.4"
 # Base64 encoding (for MCP image content)
 base64 = "0.22"
 
+# Encryption for secure file storage fallback
+chacha20poly1305 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+hostname = { version = "0.4", optional = true }
+hkdf = { version = "0.12", optional = true }
+rand = { version = "0.8", optional = true }
+
 # Image processing (for future milestones)
 image = { version = "0.25", features = ["png", "jpeg", "webp"], optional = true }
 tempfile = { version = "3.10", optional = true }
@@ -62,7 +69,7 @@ criterion = "0.5"
 [features]
 default = ["image-processing"]
 # Platform backends (will be enabled in future milestones)
-linux-wayland = ["ashpd", "keyring"]
+linux-wayland = ["ashpd", "keyring", "chacha20poly1305", "sha2", "hostname", "hkdf", "rand"]
 linux-x11 = ["x11rb", "xcap"]
 windows-backend = ["windows-sys", "windows-capture"]
 macos-backend = ["objc2-screen-capture-kit", "core-graphics"]

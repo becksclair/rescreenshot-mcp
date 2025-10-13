@@ -270,6 +270,21 @@ impl MockBackend {
                     CaptureError::IoError(std::io::Error::new(e.kind(), e.to_string()))
                 }
                 CaptureError::ImageError(msg) => CaptureError::ImageError(msg.clone()),
+                CaptureError::KeyringUnavailable { reason } => CaptureError::KeyringUnavailable {
+                    reason: reason.clone(),
+                },
+                CaptureError::KeyringOperationFailed { operation, reason } => {
+                    CaptureError::KeyringOperationFailed {
+                        operation: operation.clone(),
+                        reason:    reason.clone(),
+                    }
+                }
+                CaptureError::TokenNotFound { source_id } => CaptureError::TokenNotFound {
+                    source_id: source_id.clone(),
+                },
+                CaptureError::EncryptionFailed { reason } => CaptureError::EncryptionFailed {
+                    reason: reason.clone(),
+                },
             });
         }
         Ok(())

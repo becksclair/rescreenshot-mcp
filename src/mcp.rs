@@ -61,6 +61,16 @@ fn convert_capture_error_to_mcp(error: CaptureError) -> McpError {
         }
         CaptureError::IoError(_) => McpError::internal_error(format!("{}", error), None),
         CaptureError::ImageError(_) => McpError::internal_error(format!("{}", error), None),
+        CaptureError::KeyringUnavailable { .. } => {
+            McpError::internal_error(format!("{}", error), None)
+        }
+        CaptureError::KeyringOperationFailed { .. } => {
+            McpError::internal_error(format!("{}", error), None)
+        }
+        CaptureError::TokenNotFound { .. } => McpError::invalid_params(format!("{}", error), None),
+        CaptureError::EncryptionFailed { .. } => {
+            McpError::internal_error(format!("{}", error), None)
+        }
     }
 }
 

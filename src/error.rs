@@ -77,6 +77,36 @@ pub enum CaptureError {
     /// Image processing error
     #[error("Image processing error: {0}")]
     ImageError(String),
+
+    /// Platform keyring is unavailable
+    #[error("Platform keyring unavailable: {reason}")]
+    KeyringUnavailable {
+        /// Reason why keyring is unavailable
+        reason: String,
+    },
+
+    /// Keyring operation failed
+    #[error("Keyring {operation} failed: {reason}")]
+    KeyringOperationFailed {
+        /// The operation that failed (e.g., "store", "retrieve", "delete")
+        operation: String,
+        /// Reason for the failure
+        reason:    String,
+    },
+
+    /// Token not found for the given source ID
+    #[error("No restore token found for source '{source_id}'")]
+    TokenNotFound {
+        /// Source ID that has no token
+        source_id: String,
+    },
+
+    /// Encryption or decryption failed
+    #[error("Encryption operation failed: {reason}")]
+    EncryptionFailed {
+        /// Reason for encryption failure
+        reason: String,
+    },
 }
 
 impl CaptureError {
@@ -176,6 +206,33 @@ impl CaptureError {
             CaptureError::ImageError(_) => {
                 "Image processing failed. Ensure the image data is valid and the requested \
                  operations are supported."
+            }
+            CaptureError::KeyringUnavailable { .. } => {
+                "Platform keyring is not available. Ensure gnome-keyring, kwallet, or similar is \
+                 installed and running. Falling back to encrypted file storage."
+            }
+            CaptureError::KeyringOperationFailed { operation, .. } => match operation.as_str() {
+                "store" => {
+                    "Failed to store token in keyring. Check keyring service is running and \
+                     accessible. Will attempt file fallback."
+                }
+                "retrieve" => {
+                    "Failed to retrieve token from keyring. The keyring service may be locked or \
+                     inaccessible. Try unlocking your keyring."
+                }
+                "delete" => {
+                    "Failed to delete token from keyring. This may leave stale tokens. Check \
+                     keyring service permissions."
+                }
+                _ => "Keyring operation failed. Check keyring service status and permissions.",
+            },
+            CaptureError::TokenNotFound { .. } => {
+                "No restore token found for this source. Run prime_wayland_consent tool first to \
+                 obtain a token for headless capture."
+            }
+            CaptureError::EncryptionFailed { .. } => {
+                "Token encryption/decryption failed. This may indicate file corruption or system \
+                 configuration changes. Try calling prime_wayland_consent again."
             }
         }
     }
