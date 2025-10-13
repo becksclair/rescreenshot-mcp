@@ -87,15 +87,268 @@ impl std::fmt::Display for ImageFormat {
     }
 }
 
-/// Wayland-specific capture source (placeholder for M2 implementation)
+/// Wayland-specific capture source configuration
 ///
-/// This enum will be expanded in M2 to support Wayland portal restore tokens
-/// and different source types (screen, window, selection).
+/// Wayland's security model uses XDG Desktop Portal with session-based
+/// permissions. This enum separates two distinct workflows:
+///
+/// 1. **Restoring a previously authorized session** - Headless capture with no
+///    user prompt, using a saved restore token from a prior session
+/// 2. **Creating a new session** - Requires user interaction via the portal
+///    picker to select what to capture
+///
+/// The session-oriented design enforces type safety: restore tokens can't be
+/// accidentally combined with creation parameters like `persist_mode` (which
+/// is ignored by the portal API during restoration).
+///
+/// # Portal API Version
+///
+/// Restore tokens require XDG Desktop Portal ScreenCast v4+. The backend will
+/// check the portal version and fall back gracefully if unavailable.
+///
+/// # Examples
+///
+/// ```
+/// use screenshot_mcp::model::{PersistMode, SourceType, WaylandSource};
+///
+/// // Restore a previous session (headless, no prompt)
+/// let restore = WaylandSource::RestoreSession {
+///     restore_token: "abc123token".to_string(),
+/// };
+///
+/// // Create a new session (shows picker to user)
+/// let new_session = WaylandSource::NewSession {
+///     source_type:    SourceType::Monitor,
+///     persist_mode:   PersistMode::PersistUntilRevoked,
+///     include_cursor: true,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "mode", rename_all = "snake_case")]
 pub enum WaylandSource {
-    /// Placeholder variant - to be implemented in M2
-    NotYetImplemented,
+    /// Restore a previous capture session using a saved token
+    ///
+    /// Tokens are single-use and rotated after each capture. The backend
+    /// automatically replaces the old token with the new one returned by
+    /// the portal. If restoration fails (e.g., token expired, compositor
+    /// restart), the backend falls back to display capture with region
+    /// cropping.
+    ///
+    /// # Token Lifecycle
+    ///
+    /// 1. **Prime**: User grants permission → token stored in keyring
+    /// 2. **Restore**: Token used for capture → new token returned → old token
+    ///    rotated
+    /// 3. **Expiry**: Compositor restart or user revocation invalidates token
+    RestoreSession {
+        /// Opaque restore token from a previous capture session
+        ///
+        /// Format is portal-implementation-specific (typically base64-encoded).
+        /// Never parse or modify this value - treat it as an opaque string.
+        restore_token: String,
+    },
+
+    /// Create a new capture session (requires user permission)
+    ///
+    /// Opens the XDG Desktop Portal picker for the user to select which
+    /// monitor, window, or virtual display to capture. If `persist_mode`
+    /// is not `DoNotPersist`, the portal returns a restore token for
+    /// future headless captures.
+    ///
+    /// # User Experience
+    ///
+    /// - **KDE Plasma**: Native picker dialog with source thumbnails
+    /// - **GNOME Shell**: System dialog with application list (for windows)
+    /// - **wlroots**: Varies by compositor (Sway uses slurp for selection)
+    NewSession {
+        /// Type of content to capture
+        source_type:    SourceType,
+        /// How long the permission should persist
+        persist_mode:   PersistMode,
+        /// Whether to include the cursor in the captured stream
+        ///
+        /// Default: `false` (cursor hidden). When `true`, the cursor is
+        /// embedded in the stream buffers (baked into pixels, not metadata).
+        #[serde(default)]
+        include_cursor: bool,
+    },
+}
+
+/// Source type for Wayland screen capture via XDG Desktop Portal
+///
+/// Maps to the `AvailableSourceTypes` bitmask in the ScreenCast portal API.
+/// Each variant corresponds to a single bit in the bitmask (values 1, 2, 4).
+///
+/// # Portal Support
+///
+/// Not all compositors support all source types:
+/// - **Monitor**: Universally supported (most reliable)
+/// - **Window**: Supported by GNOME, KDE, Hyprland; not reliable on wlroots
+/// - **Virtual**: Compositor-dependent; used for extending displays
+///
+/// # Implementation Note
+///
+/// While the portal API accepts bitmask combinations (e.g., `1|2` for both
+/// monitor and window), in practice most use cases select a single source.
+/// The current design uses a simple enum; if multi-source support is needed
+/// in the future, a `MultipleSource(Vec<SourceType>)` variant can be added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceType {
+    /// Capture an entire monitor/display output
+    ///
+    /// Shows a picker with all connected monitors. Most stable option.
+    Monitor,
+    /// Capture a specific application window
+    ///
+    /// Shows a picker with running applications. May not work reliably
+    /// on all compositors (wlroots-based compositors often lack support).
+    Window,
+    /// Capture a virtual display (compositor-dependent)
+    ///
+    /// Creates a new virtual output for capture. Rarely used; check
+    /// compositor documentation for support.
+    Virtual,
+}
+
+impl SourceType {
+    /// Convert to XDG Desktop Portal ScreenCast bitmask value
+    ///
+    /// This is an internal conversion method used by the Wayland backend
+    /// when calling the portal API. The bitmask values are defined by the
+    /// `AvailableSourceTypes` property in the ScreenCast specification.
+    ///
+    /// # Returns
+    ///
+    /// - `Monitor` → `1` (bit 0)
+    /// - `Window` → `2` (bit 1)
+    /// - `Virtual` → `4` (bit 2)
+    #[allow(dead_code)] // Will be used by WaylandBackend in Phase 3
+    pub(crate) fn to_bitmask(self) -> u32 {
+        match self {
+            SourceType::Monitor => 1,
+            SourceType::Window => 2,
+            SourceType::Virtual => 4,
+        }
+    }
+
+    /// Parse from XDG Desktop Portal bitmask (for debugging/logging)
+    ///
+    /// Inverse of `to_bitmask()`. Returns `None` for invalid or combined
+    /// bitmask values (e.g., `3`, `5`, `7`).
+    #[allow(dead_code)]
+    pub(crate) fn from_bitmask(value: u32) -> Option<Self> {
+        match value {
+            1 => Some(SourceType::Monitor),
+            2 => Some(SourceType::Window),
+            4 => Some(SourceType::Virtual),
+            _ => None, // Invalid or combined types
+        }
+    }
+}
+
+impl std::fmt::Display for SourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceType::Monitor => write!(f, "monitor"),
+            SourceType::Window => write!(f, "window"),
+            SourceType::Virtual => write!(f, "virtual"),
+        }
+    }
+}
+
+/// Permission persistence strategy for Wayland capture sessions
+///
+/// Controls how long a capture permission remains valid after the initial
+/// user grant. Maps to the `persist_mode` option in the ScreenCast portal API.
+///
+/// # Security Considerations
+///
+/// - `DoNotPersist`: Most secure (one-time permission), but prompts every time
+/// - `TransientWhileRunning`: Balanced (permission revoked on app exit)
+/// - `PersistUntilRevoked`: Most convenient, but permission survives app
+///   restarts
+///
+/// Users can manually revoke persistent permissions through their desktop
+/// environment's settings (e.g., GNOME Settings → Privacy → Screen Sharing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistMode {
+    /// Do not persist permission (one-time capture)
+    ///
+    /// The user must grant permission for every capture. No restore token
+    /// is returned by the portal. Use this for maximum security when
+    /// captures are infrequent.
+    DoNotPersist,
+
+    /// Persist permission while the application is running
+    ///
+    /// The permission (and restore token) is stored in memory and revoked
+    /// when the application closes its D-Bus connection. Intended for
+    /// applications like web browsers that need multiple captures during
+    /// a session. Portal implementations may time out these permissions
+    /// after a period of inactivity.
+    TransientWhileRunning,
+
+    /// Persist permission until explicitly revoked by the user
+    ///
+    /// The permission (and restore token) is stored on disk in the portal's
+    /// permissions store. It survives application restarts and compositor
+    /// restarts. The user must manually revoke it through desktop settings.
+    /// This is the default and most convenient option for MCP servers.
+    PersistUntilRevoked,
+}
+
+impl PersistMode {
+    /// Convert to XDG Desktop Portal ScreenCast persist_mode value
+    ///
+    /// This is an internal conversion method used by the Wayland backend
+    /// when calling the portal API.
+    ///
+    /// # Returns
+    ///
+    /// - `DoNotPersist` → `0`
+    /// - `TransientWhileRunning` → `1`
+    /// - `PersistUntilRevoked` → `2`
+    #[allow(dead_code)] // Will be used by WaylandBackend in Phase 3
+    pub(crate) fn to_portal_value(self) -> u32 {
+        match self {
+            PersistMode::DoNotPersist => 0,
+            PersistMode::TransientWhileRunning => 1,
+            PersistMode::PersistUntilRevoked => 2,
+        }
+    }
+
+    /// Parse from portal persist_mode value (for debugging/logging)
+    #[allow(dead_code)]
+    pub(crate) fn from_portal_value(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(PersistMode::DoNotPersist),
+            1 => Some(PersistMode::TransientWhileRunning),
+            2 => Some(PersistMode::PersistUntilRevoked),
+            _ => None,
+        }
+    }
+}
+
+impl Default for PersistMode {
+    /// Default to `PersistUntilRevoked` for maximum convenience
+    ///
+    /// This matches the typical use case for MCP servers: capture once,
+    /// then re-capture automatically without user interaction.
+    fn default() -> Self {
+        PersistMode::PersistUntilRevoked
+    }
+}
+
+impl std::fmt::Display for PersistMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PersistMode::DoNotPersist => write!(f, "do_not_persist"),
+            PersistMode::TransientWhileRunning => write!(f, "transient_while_running"),
+            PersistMode::PersistUntilRevoked => write!(f, "persist_until_revoked"),
+        }
+    }
 }
 
 /// Type alias for window handle identifiers
@@ -622,11 +875,228 @@ mod tests {
         assert_eq!(ImageFormat::default(), ImageFormat::Png);
     }
 
+    // ========== M2 Phase 2 Tests: Wayland Types ==========
+
     #[test]
-    fn test_wayland_source_serialization() {
-        let source = WaylandSource::NotYetImplemented;
+    fn test_wayland_source_restore_session_serialization() {
+        let source = WaylandSource::RestoreSession {
+            restore_token: "abc123token".to_string(),
+        };
         let json = serde_json::to_string(&source).unwrap();
-        assert_eq!(json, r#""not_yet_implemented""#);
+        // Tagged union serialization
+        assert!(json.contains(r#""mode":"restore_session""#));
+        assert!(json.contains(r#""restore_token":"abc123token""#));
+    }
+
+    #[test]
+    fn test_wayland_source_restore_session_deserialization() {
+        let json = r#"{"mode":"restore_session","restore_token":"xyz789"}"#;
+        let source: WaylandSource = serde_json::from_str(json).unwrap();
+        match source {
+            WaylandSource::RestoreSession { restore_token } => {
+                assert_eq!(restore_token, "xyz789");
+            }
+            _ => panic!("Expected RestoreSession variant"),
+        }
+    }
+
+    #[test]
+    fn test_wayland_source_new_session_serialization() {
+        let source = WaylandSource::NewSession {
+            source_type:    SourceType::Monitor,
+            persist_mode:   PersistMode::PersistUntilRevoked,
+            include_cursor: true,
+        };
+        let json = serde_json::to_string(&source).unwrap();
+        assert!(json.contains(r#""mode":"new_session""#));
+        assert!(json.contains(r#""source_type":"monitor""#));
+        assert!(json.contains(r#""persist_mode":"persist_until_revoked""#));
+        assert!(json.contains(r#""include_cursor":true"#));
+    }
+
+    #[test]
+    fn test_wayland_source_new_session_deserialization() {
+        let json = r#"{
+            "mode":"new_session",
+            "source_type":"window",
+            "persist_mode":"transient_while_running",
+            "include_cursor":false
+        }"#;
+        let source: WaylandSource = serde_json::from_str(json).unwrap();
+        match source {
+            WaylandSource::NewSession {
+                source_type,
+                persist_mode,
+                include_cursor,
+            } => {
+                assert_eq!(source_type, SourceType::Window);
+                assert_eq!(persist_mode, PersistMode::TransientWhileRunning);
+                assert!(!include_cursor);
+            }
+            _ => panic!("Expected NewSession variant"),
+        }
+    }
+
+    #[test]
+    fn test_wayland_source_new_session_default_cursor() {
+        // Test that include_cursor defaults to false when omitted
+        let json = r#"{
+            "mode":"new_session",
+            "source_type":"monitor",
+            "persist_mode":"do_not_persist"
+        }"#;
+        let source: WaylandSource = serde_json::from_str(json).unwrap();
+        match source {
+            WaylandSource::NewSession { include_cursor, .. } => {
+                assert!(!include_cursor, "include_cursor should default to false");
+            }
+            _ => panic!("Expected NewSession variant"),
+        }
+    }
+
+    #[test]
+    fn test_source_type_bitmask_conversion() {
+        assert_eq!(SourceType::Monitor.to_bitmask(), 1);
+        assert_eq!(SourceType::Window.to_bitmask(), 2);
+        assert_eq!(SourceType::Virtual.to_bitmask(), 4);
+    }
+
+    #[test]
+    fn test_source_type_from_bitmask() {
+        assert_eq!(SourceType::from_bitmask(1), Some(SourceType::Monitor));
+        assert_eq!(SourceType::from_bitmask(2), Some(SourceType::Window));
+        assert_eq!(SourceType::from_bitmask(4), Some(SourceType::Virtual));
+        // Invalid or combined values
+        assert_eq!(SourceType::from_bitmask(0), None);
+        assert_eq!(SourceType::from_bitmask(3), None);
+        assert_eq!(SourceType::from_bitmask(5), None);
+        assert_eq!(SourceType::from_bitmask(7), None);
+    }
+
+    #[test]
+    fn test_source_type_serialization() {
+        assert_eq!(serde_json::to_string(&SourceType::Monitor).unwrap(), r#""monitor""#);
+        assert_eq!(serde_json::to_string(&SourceType::Window).unwrap(), r#""window""#);
+        assert_eq!(serde_json::to_string(&SourceType::Virtual).unwrap(), r#""virtual""#);
+    }
+
+    #[test]
+    fn test_source_type_deserialization() {
+        assert_eq!(
+            serde_json::from_str::<SourceType>(r#""monitor""#).unwrap(),
+            SourceType::Monitor
+        );
+        assert_eq!(serde_json::from_str::<SourceType>(r#""window""#).unwrap(), SourceType::Window);
+        assert_eq!(
+            serde_json::from_str::<SourceType>(r#""virtual""#).unwrap(),
+            SourceType::Virtual
+        );
+    }
+
+    #[test]
+    fn test_source_type_display() {
+        assert_eq!(format!("{}", SourceType::Monitor), "monitor");
+        assert_eq!(format!("{}", SourceType::Window), "window");
+        assert_eq!(format!("{}", SourceType::Virtual), "virtual");
+    }
+
+    #[test]
+    fn test_persist_mode_portal_value_conversion() {
+        assert_eq!(PersistMode::DoNotPersist.to_portal_value(), 0);
+        assert_eq!(PersistMode::TransientWhileRunning.to_portal_value(), 1);
+        assert_eq!(PersistMode::PersistUntilRevoked.to_portal_value(), 2);
+    }
+
+    #[test]
+    fn test_persist_mode_from_portal_value() {
+        assert_eq!(PersistMode::from_portal_value(0), Some(PersistMode::DoNotPersist));
+        assert_eq!(PersistMode::from_portal_value(1), Some(PersistMode::TransientWhileRunning));
+        assert_eq!(PersistMode::from_portal_value(2), Some(PersistMode::PersistUntilRevoked));
+        assert_eq!(PersistMode::from_portal_value(3), None);
+        assert_eq!(PersistMode::from_portal_value(99), None);
+    }
+
+    #[test]
+    fn test_persist_mode_serialization() {
+        assert_eq!(
+            serde_json::to_string(&PersistMode::DoNotPersist).unwrap(),
+            r#""do_not_persist""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PersistMode::TransientWhileRunning).unwrap(),
+            r#""transient_while_running""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PersistMode::PersistUntilRevoked).unwrap(),
+            r#""persist_until_revoked""#
+        );
+    }
+
+    #[test]
+    fn test_persist_mode_deserialization() {
+        assert_eq!(
+            serde_json::from_str::<PersistMode>(r#""do_not_persist""#).unwrap(),
+            PersistMode::DoNotPersist
+        );
+        assert_eq!(
+            serde_json::from_str::<PersistMode>(r#""transient_while_running""#).unwrap(),
+            PersistMode::TransientWhileRunning
+        );
+        assert_eq!(
+            serde_json::from_str::<PersistMode>(r#""persist_until_revoked""#).unwrap(),
+            PersistMode::PersistUntilRevoked
+        );
+    }
+
+    #[test]
+    fn test_persist_mode_default() {
+        assert_eq!(PersistMode::default(), PersistMode::PersistUntilRevoked);
+    }
+
+    #[test]
+    fn test_persist_mode_display() {
+        assert_eq!(format!("{}", PersistMode::DoNotPersist), "do_not_persist");
+        assert_eq!(format!("{}", PersistMode::TransientWhileRunning), "transient_while_running");
+        assert_eq!(format!("{}", PersistMode::PersistUntilRevoked), "persist_until_revoked");
+    }
+
+    #[test]
+    fn test_wayland_types_json_schema_generation() {
+        // Verify that all Wayland types implement JsonSchema
+        let wayland_schema = schemars::schema_for!(WaylandSource);
+        let _source_type_schema = schemars::schema_for!(SourceType);
+        let _persist_mode_schema = schemars::schema_for!(PersistMode);
+
+        // Verify WaylandSource generates a tagged union (oneOf with discriminator)
+        let wayland_json = serde_json::to_value(wayland_schema).unwrap();
+        assert!(
+            wayland_json["oneOf"].is_array(),
+            "WaylandSource should serialize as oneOf (tagged union)"
+        );
+    }
+
+    #[test]
+    fn test_wayland_source_roundtrip_restore() {
+        // Test serialization → deserialization roundtrip for RestoreSession
+        let original = WaylandSource::RestoreSession {
+            restore_token: "test_token_12345".to_string(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: WaylandSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn test_wayland_source_roundtrip_new_session() {
+        // Test serialization → deserialization roundtrip for NewSession
+        let original = WaylandSource::NewSession {
+            source_type:    SourceType::Virtual,
+            persist_mode:   PersistMode::DoNotPersist,
+            include_cursor: true,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: WaylandSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, parsed);
     }
 
     #[test]

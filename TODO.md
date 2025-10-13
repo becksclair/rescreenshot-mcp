@@ -179,9 +179,50 @@
 - `src/capture/mock.rs` - Updated error pattern matching
 - `src/mcp.rs` - Updated error conversion
 
+### Phase 2: Wayland Types & Models ✅ COMPLETED (2025-10-13)
+
+**Completed Tasks:**
+1. ✅ Replaced WaylandSource::NotYetImplemented with session-oriented design
+2. ✅ Created WaylandSource enum with RestoreSession and NewSession variants
+3. ✅ Implemented tagged union serialization (#[serde(tag = "mode")])
+4. ✅ Created SourceType enum (Monitor, Window, Virtual)
+5. ✅ Implemented SourceType::to_bitmask() for portal API (1, 2, 4)
+6. ✅ Implemented SourceType::from_bitmask() for debugging
+7. ✅ Added Display trait for SourceType
+8. ✅ Created PersistMode enum (DoNotPersist, TransientWhileRunning, PersistUntilRevoked)
+9. ✅ Implemented PersistMode::to_portal_value() for portal API (0, 1, 2)
+10. ✅ Implemented PersistMode::from_portal_value() for debugging
+11. ✅ Added Default trait for PersistMode (defaults to PersistUntilRevoked)
+12. ✅ Added Display trait for PersistMode
+13. ✅ Wrote 19 comprehensive unit tests for all Wayland types
+14. ✅ All 190 tests passing (184 from M0+M1+Phase 1, 19 new for Phase 2, minus 1 replaced)
+15. ✅ Zero clippy warnings
+16. ✅ Code formatted with rustfmt
+
+**Design Decisions (Based on Oracle Analysis):**
+- **Session-Oriented Design:** Separates "restore existing" vs "create new" workflows
+- **Tagged Union:** Uses serde's externally-tagged enum for clear JSON discriminator
+- **Type Safety:** Impossible to combine restore tokens with creation parameters
+- **Bitmask Abstraction:** Internal converters hide portal API complexity
+- **AI-Friendly JSON:** Explicit "mode" field for LLM clarity
+- **Forward Compatible:** Easy to extend for future portal API features
+
+**Files Modified:**
+- `src/model.rs` - Added WaylandSource, SourceType, PersistMode (~260 lines new code, ~240 lines tests)
+
+**Test Coverage:**
+- RestoreSession serialization/deserialization
+- NewSession serialization/deserialization with defaults
+- SourceType bitmask conversion (to/from)
+- SourceType serialization, deserialization, Display
+- PersistMode portal value conversion (to/from)
+- PersistMode serialization, deserialization, Display, Default
+- JSON Schema generation (verified tagged union)
+- Roundtrip tests for data integrity
+
 ### Phase Progress
 - Phase 1: ✅ COMPLETED (15/15 tasks) - KeyStore Implementation with Security Fixes
-- Phase 2: ⏳ NOT STARTED (0/11 tasks) - Wayland Types & Models
+- Phase 2: ✅ COMPLETED (16/16 tasks) - Wayland Types & Models
 - Phase 3: ⏳ NOT STARTED (0/12 tasks) - WaylandBackend Structure
 - Phase 4: ⏳ NOT STARTED (0/16 tasks) - prime_wayland_consent Tool
 - Phase 5: ⏳ NOT STARTED (0/20 tasks) - Headless Capture with Token Restore
@@ -191,9 +232,10 @@
 - Phase 9: ⏳ NOT STARTED (0/14 tasks) - Integration Tests
 - Phase 10: ⏳ NOT STARTED (0/14 tasks) - Integration & Validation
 
-**Overall M2 Progress: 15/143 tasks (10.5%) - Phase 1 Complete! ✅**
+**Overall M2 Progress: 31/159 tasks (19.5%) - Phases 1 & 2 Complete! ✅**
 
-**Estimated Test Count:** 220+ total tests (172 from M0+M1, 50+ new for M2)
+**Current Test Count:** 190 tests passing (184 from M0+M1+Phase 1, 19 new for Phase 2, minus 1 replaced old placeholder test)
+**Estimated Final Test Count:** 220+ total tests (30+ more to add in Phases 3-10)
 
 ---
 
