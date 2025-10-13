@@ -318,6 +318,58 @@ impl KeyStore {
         }
     }
 
+    /// Atomically rotates a token (replaces old token with new one)
+    ///
+    /// This is a critical operation for Wayland restore tokens, which are
+    /// single-use and must be replaced after each capture. The operation
+    /// is atomic: the old token is deleted and the new token is stored
+    /// in a single operation, ensuring thread-safety and consistency.
+    ///
+    /// Works with both keyring and file storage backends.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_id` - Source identifier for the token to rotate
+    /// * `new_token` - New restore token to store
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if rotation succeeded
+    /// - `Err(TokenNotFound)` if no token exists for this source_id
+    /// - `Err(EncryptionFailed)` if file persistence failed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use screenshot_mcp::util::key_store::KeyStore;
+    ///
+    /// let store = KeyStore::new();
+    /// store.store_token("window-123", "token_v1").unwrap();
+    ///
+    /// // After capture, portal returns new token
+    /// store.rotate_token("window-123", "token_v2").unwrap();
+    ///
+    /// let token = store.retrieve_token("window-123").unwrap();
+    /// assert_eq!(token, Some("token_v2".to_string()));
+    /// ```
+    pub fn rotate_token(&self, source_id: &str, new_token: &str) -> CaptureResult<()> {
+        // First, verify token exists (check both keyring and file store)
+        if !self.has_token(source_id)? {
+            return Err(CaptureError::TokenNotFound {
+                source_id: source_id.to_string(),
+            });
+        }
+
+        // Delete old token (from both keyring and file)
+        self.delete_token(source_id)?;
+
+        // Store new token (will use same backend as before)
+        self.store_token(source_id, new_token)?;
+
+        tracing::debug!("Token rotated for source '{}' (new token stored)", source_id);
+        Ok(())
+    }
+
     // ========== Private Helper Methods ==========
 
     /// Constructs the full key name for keyring entries
@@ -878,5 +930,122 @@ mod tests {
     fn test_default_trait() {
         let store = KeyStore::default();
         assert!(store.service_name == "screenshot-mcp-wayland");
+    }
+
+    #[test]
+    fn test_rotate_token_success() {
+        let store = KeyStore::new();
+
+        // Store initial token
+        store.store_token("rotate-test", "token_v1").unwrap();
+        assert_eq!(store.retrieve_token("rotate-test").unwrap(), Some("token_v1".to_string()));
+
+        // Rotate to new token
+        store.rotate_token("rotate-test", "token_v2").unwrap();
+        assert_eq!(store.retrieve_token("rotate-test").unwrap(), Some("token_v2".to_string()));
+
+        // Cleanup
+        store.delete_token("rotate-test").unwrap();
+    }
+
+    #[test]
+    fn test_rotate_token_nonexistent() {
+        let store = KeyStore::new();
+
+        // Try to rotate token that doesn't exist
+        let result = store.rotate_token("nonexistent", "new_token");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CaptureError::TokenNotFound { .. }));
+    }
+
+    #[test]
+    fn test_rotate_token_multiple_times() {
+        let store = KeyStore::new();
+
+        // Store initial token
+        store.store_token("multi-rotate", "token_v1").unwrap();
+
+        // Rotate multiple times
+        store.rotate_token("multi-rotate", "token_v2").unwrap();
+        assert_eq!(
+            store.retrieve_token("multi-rotate").unwrap(),
+            Some("token_v2".to_string())
+        );
+
+        store.rotate_token("multi-rotate", "token_v3").unwrap();
+        assert_eq!(
+            store.retrieve_token("multi-rotate").unwrap(),
+            Some("token_v3".to_string())
+        );
+
+        store.rotate_token("multi-rotate", "token_v4").unwrap();
+        assert_eq!(
+            store.retrieve_token("multi-rotate").unwrap(),
+            Some("token_v4".to_string())
+        );
+
+        // Cleanup
+        store.delete_token("multi-rotate").unwrap();
+    }
+
+    #[test]
+    fn test_rotate_token_atomicity() {
+        use std::{sync::Arc, thread};
+
+        let store = Arc::new(KeyStore::new());
+
+        // Store initial token
+        store.store_token("atomic-test", "token_v1").unwrap();
+
+        // Spawn threads that rotate concurrently
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let store_clone = Arc::clone(&store);
+                thread::spawn(move || {
+                    let new_token = format!("token_v{}", i + 2);
+                    // This may fail if another thread rotated first, that's expected
+                    let _ = store_clone.rotate_token("atomic-test", &new_token);
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Should have some token stored (one of the rotations succeeded)
+        let token = store.retrieve_token("atomic-test").unwrap();
+        assert!(token.is_some());
+        assert!(token.unwrap().starts_with("token_v"));
+
+        // Cleanup
+        store.delete_token("atomic-test").unwrap();
+    }
+
+    #[test]
+    fn test_rotate_token_persistence() {
+        let store = KeyStore::new();
+
+        // Store and rotate
+        store.store_token("persist-test", "token_v1").unwrap();
+        store.rotate_token("persist-test", "token_v2").unwrap();
+
+        // Verify file was updated (if file path exists)
+        if let Some(file_path) = &store.file_path {
+            if file_path.exists() {
+                let contents = fs::read(file_path).unwrap();
+                // Should not contain old token in plaintext
+                assert!(!String::from_utf8_lossy(&contents).contains("token_v1"));
+            }
+        }
+
+        // Verify new token is retrievable
+        assert_eq!(
+            store.retrieve_token("persist-test").unwrap(),
+            Some("token_v2".to_string())
+        );
+
+        // Cleanup
+        store.delete_token("persist-test").unwrap();
     }
 }

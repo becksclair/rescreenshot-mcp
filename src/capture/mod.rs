@@ -19,8 +19,14 @@ use crate::{
 pub mod image_buffer;
 pub mod mock;
 
+#[cfg(feature = "linux-wayland")]
+pub mod wayland_backend;
+
 pub use image_buffer::ImageBuffer;
 pub use mock::MockBackend;
+
+#[cfg(feature = "linux-wayland")]
+pub use wayland_backend::WaylandBackend;
 
 /// Core trait for screenshot capture backends
 ///
