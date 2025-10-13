@@ -17,10 +17,10 @@ use crate::{
 };
 
 pub mod image_buffer;
-// Mock backend stub for Phase 8
 pub mod mock;
 
 pub use image_buffer::ImageBuffer;
+pub use mock::MockBackend;
 
 /// Core trait for screenshot capture backends
 ///

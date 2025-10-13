@@ -228,19 +228,19 @@
 
 ## M1: Core Capture Facade & Image Handling
 **Timeline:** Week 2 (20 hours / 2.5 working days)
-**Status:** 🚧 In Progress (Phases 1-7 Complete)
+**Status:** 🚧 In Progress (Phases 1-8 Complete, 77.5%)
 
 **Objective:** Design and implement `CaptureFacade` trait with platform backend registration, image encoding pipeline, and temp file ResourceLink generation.
 
 **Deliverables:**
 - ✅ CaptureFacade trait with async methods for all backends
-- ⏳ MockBackend implementation for E2E testing
+- ✅ MockBackend implementation for E2E testing
 - ✅ Image encoding pipeline (PNG/WebP/JPEG)
 - ✅ Temp file management with cleanup on exit
 - ✅ MCP content builders (image blocks + ResourceLinks)
 - ✅ Extended model types (WindowSelector, CaptureOptions, etc.)
 - ✅ Comprehensive error types with remediation hints
-- ✅ 130 tests passing (107 new tests for M1, exceeds 40+ target by 167%!)
+- ✅ 161 tests passing (138 new tests for M1, exceeds 40+ target by 245%!)
 
 ---
 
@@ -384,28 +384,28 @@
 
 ---
 
-### Phase 8: MockBackend Implementation (3h) ⏳ Not Started
-- [ ] Implement `MockBackend` struct in src/capture/mock.rs
-- [ ] Add fields: configurable_delay: Option<Duration>, error_injection: Option<CaptureError>
-- [ ] Implement `new()` constructor with default values
-- [ ] Implement `with_delay(delay: Duration)` builder
-- [ ] Implement `with_error(error: CaptureError)` builder
-- [ ] Implement `list_windows()` -> return 3 mock windows (Firefox, VSCode, Terminal)
-- [ ] Implement `resolve_target()` -> fuzzy match against mock windows
-- [ ] Implement `capture_window()` -> generate test image (1920x1080 colored rectangle)
-- [ ] Use `ImageBuffer::from_test_pattern()` with gradients
-- [ ] Add configurable delay if set
-- [ ] Return injected error if set
-- [ ] Implement `capture_display()` -> generate full screen test image
-- [ ] Implement `capabilities()` -> return full support
-- [ ] Write unit tests for list_windows
-- [ ] Write unit tests for resolve_target with various selectors
-- [ ] Write integration test for full capture flow
-- [ ] Write test for error injection
-- [ ] Add performance test (<2s for capture flow)
-- [ ] Export MockBackend from capture/mod.rs
+### Phase 8: MockBackend Implementation (3h) ✅ COMPLETED (2025-10-13)
+- [x] Implement `MockBackend` struct in src/capture/mock.rs
+- [x] Add fields: configurable_delay: Option<Duration>, error_injection: Option<CaptureError>
+- [x] Implement `new()` constructor with default values
+- [x] Implement `with_delay(delay: Duration)` builder
+- [x] Implement `with_error(error: CaptureError)` builder
+- [x] Implement `list_windows()` -> return 3 mock windows (Firefox, VSCode, Terminal)
+- [x] Implement `resolve_target()` -> fuzzy match against mock windows
+- [x] Implement `capture_window()` -> generate test image (1920x1080 colored rectangle)
+- [x] Use `ImageBuffer::from_test_pattern()` with gradients
+- [x] Add configurable delay if set
+- [x] Return injected error if set
+- [x] Implement `capture_display()` -> generate full screen test image
+- [x] Implement `capabilities()` -> return full support
+- [x] Write unit tests for list_windows
+- [x] Write unit tests for resolve_target with various selectors
+- [x] Write integration test for full capture flow
+- [x] Write test for error injection
+- [x] Add performance test (<2s for capture flow)
+- [x] Export MockBackend from capture/mod.rs
 
-**Exit Criteria:** ✅ MockBackend fully functional, 12+ tests pass, <2s capture time
+**Exit Criteria:** ✅ MockBackend fully functional, 31 tests pass (exceeds 12+ by 158%), <2s capture time
 
 ---
 
@@ -538,22 +538,34 @@
 - Phase 5: ✅ COMPLETED (16/16 tasks)
 - Phase 6: ✅ COMPLETED (14/14 tasks)
 - Phase 7: ✅ COMPLETED (13/13 tasks)
-- Phase 8: ⏳ Not Started (0/19 tasks)
+- Phase 8: ✅ COMPLETED (19/19 tasks)
 - Phase 9: ⏳ Not Started (0/20 tasks)
 - Phase 10: ⏳ Not Started (0/15 tasks)
 
-**Overall M1 Progress: 98/151 tasks (64.9%) - Phases 1-7 COMPLETE! 🎉**
+**Overall M1 Progress: 117/151 tasks (77.5%) - Phases 1-8 COMPLETE! 🎉**
 
-**Test Count:** 130 tests passing (23 from M0 + 107 new for M1)
+**Test Count:** 161 tests passing (23 from M0 + 138 new for M1)
 - Phase 1 (Model Types): 24 tests
 - Phase 2 (Error Types): 20 tests
 - Phase 3 (ImageBuffer): 16 tests
 - Phase 4 (Encoding): 21 tests
 - Phase 5 (Temp Files): 37 tests
 - Phase 6 (MCP Content): 13 tests
+- Phase 8 (MockBackend): 31 tests
 
 **Code Quality:**
-- ✅ All 130 tests passing
+- ✅ All 161 tests passing
 - ✅ Clippy clean (no warnings)
 - ✅ Code formatted with rustfmt
 - ✅ Comprehensive documentation with examples
+
+**Phase 8 Achievement Summary (2025-10-13):**
+- ✅ Complete MockBackend implementation (776 lines)
+- ✅ All 5 CaptureFacade trait methods implemented
+- ✅ 3 predefined mock windows (Firefox, VSCode, Terminal)
+- ✅ Fuzzy matching with case-insensitive title search
+- ✅ Configurable delay and error injection for testing
+- ✅ Test image generation (1920x1080 windows, 2560x1440 displays)
+- ✅ 31 comprehensive tests (158% over target!)
+- ✅ Full E2E capture flow tested
+- ✅ Performance test passes (<2s requirement)
