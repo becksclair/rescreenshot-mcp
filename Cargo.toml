@@ -54,6 +54,7 @@ ashpd = { version = "0.12", optional = true }
 x11rb = { version = "0.13", optional = true }
 xcap = { version = "0.7", optional = true }
 keyring = { version = "2.3", optional = true }
+pipewire = { version = "0.8", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_UI_WindowsAndMessaging", "Win32_System_Threading"], optional = true }
@@ -69,7 +70,7 @@ criterion = "0.5"
 [features]
 default = ["image-processing"]
 # Platform backends (will be enabled in future milestones)
-linux-wayland = ["ashpd", "keyring", "chacha20poly1305", "sha2", "hostname", "hkdf", "rand"]
+linux-wayland = ["ashpd", "keyring", "chacha20poly1305", "sha2", "hostname", "hkdf", "rand", "pipewire"]
 linux-x11 = ["x11rb", "xcap"]
 windows-backend = ["windows-sys", "windows-capture"]
 macos-backend = ["objc2-screen-capture-kit", "core-graphics"]
