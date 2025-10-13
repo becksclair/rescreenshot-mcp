@@ -228,12 +228,12 @@
 
 ## M1: Core Capture Facade & Image Handling
 **Timeline:** Week 2 (20 hours / 2.5 working days)
-**Status:** 🚧 In Progress (Phases 1-6 Complete)
+**Status:** 🚧 In Progress (Phases 1-7 Complete)
 
 **Objective:** Design and implement `CaptureFacade` trait with platform backend registration, image encoding pipeline, and temp file ResourceLink generation.
 
 **Deliverables:**
-- ⏳ CaptureFacade trait with async methods for all backends
+- ✅ CaptureFacade trait with async methods for all backends
 - ⏳ MockBackend implementation for E2E testing
 - ✅ Image encoding pipeline (PNG/WebP/JPEG)
 - ✅ Temp file management with cleanup on exit
@@ -365,20 +365,20 @@
 
 ---
 
-### Phase 7: CaptureFacade Trait (1.5h) ⏳ Not Started
-- [ ] Create src/capture/mod.rs
-- [ ] Define `CaptureFacade` trait with async_trait
-- [ ] Add `async fn list_windows(&self) -> Result<Vec<WindowInfo>>`
-- [ ] Add `async fn resolve_target(&self, selector: &WindowSelector) -> Result<WindowHandle>`
-- [ ] Add `async fn capture_window(&self, handle: WindowHandle, opts: &CaptureOptions) -> Result<ImageBuffer>`
-- [ ] Add `async fn capture_display(&self, display_id: Option<u32>, opts: &CaptureOptions) -> Result<ImageBuffer>`
-- [ ] Add `fn capabilities(&self) -> Capabilities`
-- [ ] Add trait bounds: `Send + Sync`
-- [ ] Write comprehensive trait documentation with examples
-- [ ] Document each method with params, returns, errors
-- [ ] Add usage examples in doc comments
-- [ ] Export trait publicly from lib.rs
-- [ ] Create capture/mock.rs stub file
+### Phase 7: CaptureFacade Trait (1.5h) ✅ COMPLETED (2025-10-13)
+- [x] Create src/capture/mod.rs
+- [x] Define `CaptureFacade` trait with async_trait
+- [x] Add `async fn list_windows(&self) -> Result<Vec<WindowInfo>>`
+- [x] Add `async fn resolve_target(&self, selector: &WindowSelector) -> Result<WindowHandle>`
+- [x] Add `async fn capture_window(&self, handle: WindowHandle, opts: &CaptureOptions) -> Result<ImageBuffer>`
+- [x] Add `async fn capture_display(&self, display_id: Option<u32>, opts: &CaptureOptions) -> Result<ImageBuffer>`
+- [x] Add `fn capabilities(&self) -> Capabilities`
+- [x] Add trait bounds: `Send + Sync`
+- [x] Write comprehensive trait documentation with examples
+- [x] Document each method with params, returns, errors
+- [x] Add usage examples in doc comments
+- [x] Export trait publicly from lib.rs
+- [x] Create capture/mock.rs stub file
 
 **Exit Criteria:** ✅ Trait compiles, well-documented
 
@@ -537,12 +537,12 @@
 - Phase 4: ✅ COMPLETED (15/15 tasks)
 - Phase 5: ✅ COMPLETED (16/16 tasks)
 - Phase 6: ✅ COMPLETED (14/14 tasks)
-- Phase 7: ⏳ Not Started (0/13 tasks)
+- Phase 7: ✅ COMPLETED (13/13 tasks)
 - Phase 8: ⏳ Not Started (0/19 tasks)
 - Phase 9: ⏳ Not Started (0/20 tasks)
 - Phase 10: ⏳ Not Started (0/15 tasks)
 
-**Overall M1 Progress: 85/151 tasks (56.3%) - Phases 1-6 COMPLETE! 🎉**
+**Overall M1 Progress: 98/151 tasks (64.9%) - Phases 1-7 COMPLETE! 🎉**
 
 **Test Count:** 130 tests passing (23 from M0 + 107 new for M1)
 - Phase 1 (Model Types): 24 tests
