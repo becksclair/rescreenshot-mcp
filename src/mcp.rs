@@ -13,10 +13,12 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "linux-wayland")]
+use crate::capture::WaylandBackend;
 use crate::{
     capture::{CaptureFacade, MockBackend},
     error::CaptureError,
-    model::{CaptureOptions, HealthCheckResponse, ImageFormat, WindowSelector},
+    model::{CaptureOptions, HealthCheckResponse, ImageFormat, SourceType, WindowSelector},
     util::{
         detect::detect_platform, encode::encode_image, mcp_content::build_capture_result,
         temp_files::TempFileManager,
@@ -36,6 +38,47 @@ pub struct CaptureWindowParams {
     /// Executable name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exe: Option<String>,
+}
+
+/// Parameters for the prime_wayland_consent tool
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimeWaylandConsentParams {
+    /// Type of content to capture: "monitor", "window", or "virtual"
+    /// Default: "monitor"
+    #[serde(default = "default_source_type")]
+    pub source_type: String,
+
+    /// Stable identifier for this source (e.g., "wayland-default",
+    /// "firefox-dev") Default: "wayland-default"
+    #[serde(default = "default_source_id")]
+    pub source_id: String,
+
+    /// Whether to include cursor in captures
+    /// Default: false
+    #[serde(default)]
+    pub include_cursor: bool,
+}
+
+fn default_source_type() -> String {
+    "monitor".to_string()
+}
+
+fn default_source_id() -> String {
+    "wayland-default".to_string()
+}
+
+/// Parses a source type string to SourceType enum
+fn parse_source_type(source_type_str: &str) -> Result<SourceType, String> {
+    match source_type_str.to_lowercase().as_str() {
+        "monitor" => Ok(SourceType::Monitor),
+        "window" => Ok(SourceType::Window),
+        "virtual" => Ok(SourceType::Virtual),
+        _ => Err(format!(
+            "Invalid source_type '{}'. Must be 'monitor', 'window', or 'virtual'",
+            source_type_str
+        )),
+    }
 }
 
 /// Converts a CaptureError to an MCP ErrorData
@@ -259,6 +302,166 @@ impl ScreenshotMcpServer {
 
         // Return as text content
         Ok(CallToolResult::success(vec![Content::text(json_str)]))
+    }
+}
+
+// Manual implementation for prime_wayland_consent tool (not using #[tool] macro
+// due to feature gate limitations with tool_router)
+impl ScreenshotMcpServer {
+    /// Prime Wayland consent - requests permission and stores restore tokens
+    ///
+    /// **Wayland-only tool** that opens the XDG Desktop Portal screencast
+    /// picker, requests user permission for screen capture, and stores the
+    /// resulting restore tokens for future headless captures.
+    ///
+    /// # Workflow
+    ///
+    /// 1. Opens portal picker dialog (user selects screen/window)
+    /// 2. User grants permission
+    /// 3. Restore tokens are stored securely in KeyStore
+    /// 4. Returns source IDs for use with `capture_window`
+    ///
+    /// # Parameters
+    ///
+    /// - `source_type` (optional): "monitor", "window", or "virtual" (default:
+    ///   "monitor")
+    /// - `source_id` (optional): Custom identifier for this source (default:
+    ///   "wayland-default")
+    /// - `include_cursor` (optional): Include cursor in captures (default:
+    ///   false)
+    ///
+    /// # Returns
+    ///
+    /// JSON object with:
+    /// - `status`: "success"
+    /// - `source_id`: Primary source ID for use with capture_window
+    /// - `all_source_ids`: Array of all source IDs (if multiple streams)
+    /// - `num_streams`: Number of streams captured
+    /// - `next_steps`: Instructions for using the stored tokens
+    ///
+    /// # Errors
+    ///
+    /// - Requires Wayland backend (fails on X11/Windows/macOS)
+    /// - Portal service must be running (xdg-desktop-portal)
+    /// - User must grant permission (cancelling returns error)
+    /// - Times out after 30 seconds if no user response
+    ///
+    /// # Examples
+    ///
+    /// Request (minimal):
+    /// ```json
+    /// {
+    ///   "method": "tools/call",
+    ///   "params": {
+    ///     "name": "prime_wayland_consent",
+    ///     "arguments": {}
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Request (with custom ID):
+    /// ```json
+    /// {
+    ///   "method": "tools/call",
+    ///   "params": {
+    ///     "name": "prime_wayland_consent",
+    ///     "arguments": {
+    ///       "sourceType": "monitor",
+    ///       "sourceId": "my-main-monitor",
+    ///       "includeCursor": false
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Response:
+    /// ```json
+    /// {
+    ///   "content": [{
+    ///     "type": "text",
+    ///     "text": "{\"status\":\"success\",\"source_id\":\"wayland-default\",\"num_streams\":1,...}"
+    ///   }]
+    /// }
+    /// ```
+    pub async fn prime_wayland_consent(
+        &self,
+        params: PrimeWaylandConsentParams,
+    ) -> Result<CallToolResult, McpError> {
+        // Implementation is only available when linux-wayland feature is enabled
+        #[cfg(feature = "linux-wayland")]
+        {
+            // Step 1: Downcast to WaylandBackend
+            let wayland_backend = self
+                .backend
+                .as_any()
+                .downcast_ref::<WaylandBackend>()
+                .ok_or_else(|| {
+                    McpError::internal_error(
+                        "prime_wayland_consent requires Wayland backend. This tool is only \
+                         available on Linux with Wayland compositor. Current backend does not \
+                         support this operation.",
+                        None,
+                    )
+                })?;
+
+            // Step 2: Parse source_type string to enum
+            let source_type = parse_source_type(&params.source_type)
+                .map_err(|e| McpError::invalid_params(e, None))?;
+
+            // Step 3: Call backend prime_consent
+            let result = wayland_backend
+                .prime_consent(source_type, &params.source_id, params.include_cursor)
+                .await
+                .map_err(convert_capture_error_to_mcp)?;
+
+            // Step 4: Build structured JSON response
+            let response_json = serde_json::json!({
+                "status": "success",
+                "source_id": result.primary_source_id,
+                "all_source_ids": result.all_source_ids,
+                "num_streams": result.num_streams,
+                "source_type": params.source_type,
+                "details": format!(
+                    "Permission granted for {} {}. Restore token(s) stored securely.",
+                    result.num_streams,
+                    if result.num_streams == 1 { "source" } else { "sources" }
+                ),
+                "next_steps": if result.num_streams == 1 {
+                    format!(
+                        "Call capture_window with exe='wayland:{}' to capture this source.",
+                        result.primary_source_id
+                    )
+                } else {
+                    format!(
+                        "Call capture_window with any of: {}",
+                        result.all_source_ids.iter()
+                            .map(|id| format!("'wayland:{}'", id))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            });
+
+            // Step 5: Return success
+            let json_str = serde_json::to_string(&response_json).map_err(|e| {
+                McpError::internal_error(
+                    format!("Failed to serialize prime_wayland_consent response: {}", e),
+                    None,
+                )
+            })?;
+
+            Ok(CallToolResult::success(vec![Content::text(json_str)]))
+        }
+
+        // When feature is not enabled, return error
+        #[cfg(not(feature = "linux-wayland"))]
+        {
+            Err(McpError::internal_error(
+                "prime_wayland_consent requires Wayland feature. This server was not compiled \
+                 with Wayland support. Rebuild with --features linux-wayland to enable this tool.",
+                None,
+            ))
+        }
     }
 }
 

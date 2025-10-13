@@ -421,6 +421,10 @@ impl CaptureFacade for MockBackend {
         // Mock backend supports all features
         Capabilities::full()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]

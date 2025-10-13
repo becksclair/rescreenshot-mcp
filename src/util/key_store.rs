@@ -967,22 +967,13 @@ mod tests {
 
         // Rotate multiple times
         store.rotate_token("multi-rotate", "token_v2").unwrap();
-        assert_eq!(
-            store.retrieve_token("multi-rotate").unwrap(),
-            Some("token_v2".to_string())
-        );
+        assert_eq!(store.retrieve_token("multi-rotate").unwrap(), Some("token_v2".to_string()));
 
         store.rotate_token("multi-rotate", "token_v3").unwrap();
-        assert_eq!(
-            store.retrieve_token("multi-rotate").unwrap(),
-            Some("token_v3".to_string())
-        );
+        assert_eq!(store.retrieve_token("multi-rotate").unwrap(), Some("token_v3".to_string()));
 
         store.rotate_token("multi-rotate", "token_v4").unwrap();
-        assert_eq!(
-            store.retrieve_token("multi-rotate").unwrap(),
-            Some("token_v4".to_string())
-        );
+        assert_eq!(store.retrieve_token("multi-rotate").unwrap(), Some("token_v4".to_string()));
 
         // Cleanup
         store.delete_token("multi-rotate").unwrap();
@@ -1040,10 +1031,7 @@ mod tests {
         }
 
         // Verify new token is retrievable
-        assert_eq!(
-            store.retrieve_token("persist-test").unwrap(),
-            Some("token_v2".to_string())
-        );
+        assert_eq!(store.retrieve_token("persist-test").unwrap(), Some("token_v2".to_string()));
 
         // Cleanup
         store.delete_token("persist-test").unwrap();

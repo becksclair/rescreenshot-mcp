@@ -24,9 +24,8 @@ pub mod wayland_backend;
 
 pub use image_buffer::ImageBuffer;
 pub use mock::MockBackend;
-
 #[cfg(feature = "linux-wayland")]
-pub use wayland_backend::WaylandBackend;
+pub use wayland_backend::{PrimeConsentResult, WaylandBackend};
 
 /// Core trait for screenshot capture backends
 ///
@@ -371,4 +370,31 @@ pub trait CaptureFacade: Send + Sync {
     /// }
     /// ```
     fn capabilities(&self) -> Capabilities;
+
+    /// Enables downcasting to concrete backend types
+    ///
+    /// This method allows platform-specific MCP tools (like
+    /// `prime_wayland_consent`) to safely downcast from `dyn CaptureFacade`
+    /// to concrete backend types (e.g., `WaylandBackend`).
+    ///
+    /// # Returns
+    ///
+    /// A reference to `self` as `&dyn std::any::Any`, which can be used
+    /// with `.downcast_ref::<ConcreteType>()`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use screenshot_mcp::capture::{CaptureFacade, WaylandBackend};
+    ///
+    /// fn use_wayland_specific_feature(backend: &dyn CaptureFacade) {
+    ///     if let Some(wayland) = backend.as_any().downcast_ref::<WaylandBackend>() {
+    ///         // Use Wayland-specific methods
+    ///         wayland.prime_consent(...);
+    ///     } else {
+    ///         eprintln!("This feature requires Wayland backend");
+    ///     }
+    /// }
+    /// ```
+    fn as_any(&self) -> &dyn std::any::Any;
 }
