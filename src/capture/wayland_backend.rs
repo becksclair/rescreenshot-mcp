@@ -766,9 +766,12 @@ impl CaptureFacade for WaylandBackend {
                 let old_token = match self.key_store.retrieve_token(&handle)? {
                     Some(token) => token,
                     None => {
-                        return Err(CaptureError::TokenNotFound {
-                            source_id: handle.clone(),
-                        })
+                        // FALLBACK TRIGGER: No token found, fall back to display capture
+                        tracing::warn!(
+                            "No restore token found for source '{}', falling back to display capture",
+                            handle
+                        );
+                        return self.capture_display(None, opts).await;
                     }
                 };
 
@@ -794,7 +797,8 @@ impl CaptureFacade for WaylandBackend {
                 let portal_source_type = Self::source_type_to_portal(SourceType::Monitor);
                 let persist_mode = Self::persist_mode_to_portal(PersistMode::PersistUntilRevoked);
 
-                proxy
+                // FALLBACK-AWARE: Try to restore session, catch token errors
+                let select_result = proxy
                     .select_sources(
                         &session,
                         cursor_mode,
@@ -820,7 +824,19 @@ impl CaptureFacade for WaylandBackend {
                                 portal: "org.freedesktop.portal.ScreenCast".to_string(),
                             }
                         }
-                    })?;
+                    });
+
+                // FALLBACK TRIGGER: If token restore failed, fall back to display capture
+                if let Err(CaptureError::TokenNotFound { source_id }) = select_result {
+                    tracing::warn!(
+                        "Token restore failed for source '{}', falling back to display capture",
+                        source_id
+                    );
+                    return self.capture_display(None, opts).await;
+                }
+
+                // Propagate other errors (non-token failures should fail-fast)
+                select_result?;
 
                 tracing::debug!("Restored session with token successfully");
 
@@ -931,6 +947,14 @@ impl CaptureFacade for WaylandBackend {
     /// display to capture. This is the fallback method when restore tokens
     /// are not available or have expired.
     ///
+    /// # Fallback Behavior
+    ///
+    /// This method is automatically called by `capture_window` when token
+    /// restoration fails. It creates a NEW portal session (no token reuse)
+    /// and presents the user with the picker dialog. The region from the
+    /// original capture options is preserved and applied to the display
+    /// capture result.
+    ///
     /// # Arguments
     ///
     /// * `display_id` - Display identifier (ignored on Wayland - user selects
@@ -948,16 +972,155 @@ impl CaptureFacade for WaylandBackend {
     /// - [`CaptureError::CaptureTimeout`] - Operation took >30 seconds
     /// - [`CaptureError::PortalUnavailable`] - Portal service unavailable
     /// - [`CaptureError::PermissionDenied`] - User denied permission
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Manual display capture (not via fallback)
+    /// let backend = WaylandBackend::new(key_store);
+    /// let opts = CaptureOptions::default();
+    /// let image = backend.capture_display(None, &opts).await?;
+    /// ```
     async fn capture_display(
         &self,
         _display_id: Option<u32>,
-        _opts: &CaptureOptions,
+        opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        // Phase 3 stub: Full implementation in Phase 6
-        // For now, return an error indicating the feature is not yet implemented
-        Err(CaptureError::BackendNotAvailable {
-            backend: BackendType::Wayland,
-        })
+        tracing::warn!("Display capture initiated (fallback or direct call)");
+
+        // Wrap entire operation in 30-second timeout
+        Self::with_timeout(
+            async {
+                // Step 1: Create portal connection
+                let proxy = self.portal().await?;
+
+                // Step 2: Create session (NEW, not restore)
+                let session = proxy.create_session().await.map_err(|e| {
+                    tracing::error!("Failed to create portal session for display capture: {}", e);
+                    CaptureError::PortalUnavailable {
+                        portal: "org.freedesktop.portal.ScreenCast".to_string(),
+                    }
+                })?;
+
+                tracing::debug!("Created portal session for display capture");
+
+                // Step 3: Select sources (MONITOR type, no restore token)
+                let cursor_mode = if opts.include_cursor {
+                    CursorMode::Embedded
+                } else {
+                    CursorMode::Hidden
+                };
+                let portal_source_type = Self::source_type_to_portal(SourceType::Monitor);
+                // DON'T persist token - this is fallback, temporary session
+                let persist_mode = Self::persist_mode_to_portal(PersistMode::DoNotPersist);
+
+                proxy
+                    .select_sources(
+                        &session,
+                        cursor_mode,
+                        portal_source_type.into(), // Convert to BitFlags
+                        false,                     // single source
+                        None,                      // NO RESTORE TOKEN (new session)
+                        persist_mode,
+                    )
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to select sources for display capture: {}", e);
+                        CaptureError::PermissionDenied {
+                            platform: "Linux".to_string(),
+                            backend:  BackendType::Wayland,
+                        }
+                    })?;
+
+                tracing::debug!("Selected display capture sources");
+
+                // Step 4: Start session (shows picker to user)
+                let request = proxy
+                    .start(&session, None) // No parent window
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Display capture portal start failed: {}", e);
+                        let err_str = e.to_string().to_lowercase();
+                        if err_str.contains("cancel") || err_str.contains("denied") {
+                            CaptureError::PermissionDenied {
+                                platform: "Linux".to_string(),
+                                backend:  BackendType::Wayland,
+                            }
+                        } else {
+                            CaptureError::PortalUnavailable {
+                                portal: "org.freedesktop.portal.ScreenCast".to_string(),
+                            }
+                        }
+                    })?;
+
+                // Get the response
+                let response = request.response().map_err(|e| {
+                    tracing::error!("Failed to get display capture portal response: {}", e);
+                    CaptureError::PermissionDenied {
+                        platform: "Linux".to_string(),
+                        backend:  BackendType::Wayland,
+                    }
+                })?;
+
+                tracing::debug!("User selected display in portal picker");
+
+                // Step 5: Get PipeWire stream
+                let streams = response.streams();
+                if streams.is_empty() {
+                    return Err(CaptureError::PermissionDenied {
+                        platform: "Linux".to_string(),
+                        backend:  BackendType::Wayland,
+                    });
+                }
+
+                let stream = &streams[0];
+                let node_id = stream.pipe_wire_node_id();
+
+                tracing::debug!(
+                    "Got PipeWire node ID: {} for display capture ({} stream(s))",
+                    node_id,
+                    streams.len()
+                );
+
+                // Step 6: Capture frame (REUSE existing helper)
+                #[cfg(feature = "linux-wayland")]
+                let raw_image = Self::capture_pipewire_frame(node_id).await?;
+
+                #[cfg(not(feature = "linux-wayland"))]
+                let raw_image: image::DynamicImage = {
+                    return Err(CaptureError::BackendNotAvailable {
+                        backend: BackendType::Wayland,
+                    });
+                };
+
+                tracing::debug!("Display capture raw image: {:?}", raw_image.dimensions());
+
+                // Step 7: Apply transformations (SAME as capture_window)
+                let mut image_buffer = ImageBuffer::new(raw_image);
+
+                // Apply region crop first (if specified)
+                if let Some(region) = &opts.region {
+                    tracing::debug!("Cropping display capture to region: {:?}", region);
+                    image_buffer = image_buffer.crop(*region)?;
+                }
+
+                // Apply scale second (if not 1.0)
+                if (opts.scale - 1.0).abs() > 0.01 {
+                    tracing::debug!("Scaling display capture by factor: {}", opts.scale);
+                    image_buffer = image_buffer.scale(opts.scale)?;
+                }
+
+                tracing::info!(
+                    "Display capture complete: {:?} (format: {:?})",
+                    image_buffer.dimensions(),
+                    opts.format
+                );
+
+                Ok(image_buffer)
+            },
+            30, // 30-second timeout
+        )
+        .await
     }
 
     /// Returns the capabilities of this Wayland backend
@@ -1105,7 +1268,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_capture_window_no_token() {
+    async fn test_capture_window_no_token_fallback() {
         let key_store = Arc::new(KeyStore::new());
         let backend = WaylandBackend::new(key_store);
 
@@ -1114,18 +1277,20 @@ mod tests {
             .capture_window("window-123".to_string(), &opts)
             .await;
         assert!(result.is_err());
-        // Should fail with TokenNotFound since no token exists for this source
-        assert!(matches!(result.unwrap_err(), CaptureError::TokenNotFound { .. }));
+        // With fallback enabled, no token triggers fallback to capture_display
+        // which fails with CaptureTimeout in test environment (portal connection times out)
+        assert!(matches!(result.unwrap_err(), CaptureError::CaptureTimeout { .. } | CaptureError::PortalUnavailable { .. }));
     }
 
     #[tokio::test]
-    async fn test_capture_display_stub() {
+    async fn test_capture_display_portal_unavailable() {
         let key_store = Arc::new(KeyStore::new());
         let backend = WaylandBackend::new(key_store);
 
         let opts = CaptureOptions::default();
         let result = backend.capture_display(None, &opts).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CaptureError::BackendNotAvailable { .. }));
+        // In test environment (no portal), capture_display fails with CaptureTimeout or PortalUnavailable
+        assert!(matches!(result.unwrap_err(), CaptureError::CaptureTimeout { .. } | CaptureError::PortalUnavailable { .. }));
     }
 }
