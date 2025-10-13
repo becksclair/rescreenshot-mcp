@@ -1,0 +1,19 @@
+# Clippy linting configuration
+
+# Strictness
+disallowed-types = []
+cognitive-complexity-threshold = 30
+
+# Error handling
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Documentation
+# missing-docs-in-crate-items is handled by rustdoc lints
+
+# Performance
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+
+# Style
+enum-variant-name-threshold = 3

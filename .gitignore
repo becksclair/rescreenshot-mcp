@@ -1,0 +1,44 @@
+# Rust/Cargo
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Testing
+.coverage
+*.profraw
+*.profdata
+
+# Logs
+*.log
+tracing-*.json
+
+# Temporary files
+/tmp/
+*.tmp
+.screenshot-mcp-*
+
+# Environment
+.env
+.env.local
+
+# Documentation
+/target/doc/
+
+# CI/CD
+.github/workflows/*.log
