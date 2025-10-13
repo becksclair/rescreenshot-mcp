@@ -12,7 +12,7 @@ categories = ["api-bindings"]
 
 [dependencies]
 # MCP SDK
-rmcp = { version = "0.3", features = ["server", "transport-io"] }
+rmcp = { version = "0.8", features = ["server", "transport-io"] }
 
 # Async runtime
 tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "sync", "process", "io-util"] }
@@ -60,7 +60,7 @@ core-graphics = { version = "0.23", optional = true }
 criterion = "0.5"
 
 [features]
-default = []
+default = ["image-processing"]
 # Platform backends (will be enabled in future milestones)
 linux-wayland = ["ashpd", "keyring"]
 linux-x11 = ["x11rb", "xcap"]

@@ -1,10 +1,14 @@
 //! screenshot-mcp: Cross-platform screenshot MCP server
 //!
-//! M0: Basic MCP server with health_check tool for platform detection
+//! M1 Phase 9: MCP server with backend integration and screenshot capture tools
+
+use std::sync::Arc;
 
 use anyhow::Result;
 use rmcp::{transport::stdio, ServiceExt};
-use screenshot_mcp::mcp::ScreenshotMcpServer;
+use screenshot_mcp::{
+    capture::MockBackend, mcp::ScreenshotMcpServer, util::temp_files::TempFileManager,
+};
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -27,8 +31,16 @@ async fn main() -> Result<()> {
     info!("Protocol: Model Context Protocol (MCP)");
     info!("Transport: stdio");
 
-    // Create the MCP server
-    let server = ScreenshotMcpServer::new();
+    // Initialize backend (MockBackend for M1)
+    let backend = Arc::new(MockBackend::new());
+    info!("Backend initialized: MockBackend (M1 testing)");
+
+    // Initialize temp file manager
+    let temp_files = Arc::new(TempFileManager::new());
+    info!("Temp file manager initialized");
+
+    // Create the MCP server with backend and temp file manager
+    let server = ScreenshotMcpServer::new(backend, temp_files);
 
     info!("Initializing stdio transport...");
 
