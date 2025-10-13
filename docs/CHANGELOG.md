@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Dependencies:** Updated Linux platform dependencies for future Rust edition compatibility
+  - `ashpd` 0.7.0 → 0.12.0 (fixes never type fallback warnings)
+  - `xcap` 0.0.10 → 0.7.1 (requires libpipewire-0.3 for linux-x11 feature)
+
+  **Note:** Building with `--all-features` requires `libpipewire-0.3-dev` system package. Default build (without platform-specific features) continues to work without additional system dependencies.
+
 ### Planned for v1.0.0
 - Window enumeration tools (`list_windows`)
 - Window capture tools (`capture_window`, `prime_wayland_consent`)
