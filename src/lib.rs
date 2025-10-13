@@ -4,6 +4,7 @@
 //! for capturing screenshots across different platforms (Linux Wayland/X11,
 //! Windows, macOS).
 
+pub mod error;
 pub mod mcp;
 pub mod model;
 pub mod util;

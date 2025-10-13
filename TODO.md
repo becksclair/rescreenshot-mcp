@@ -223,3 +223,323 @@
 **Lines of Code:** ~900 LOC
 **Test Coverage:** 23 tests covering all core functionality
 **Documentation:** Comprehensive doc comments on all public APIs
+
+---
+
+## M1: Core Capture Facade & Image Handling
+**Timeline:** Week 2 (20 hours / 2.5 working days)
+**Status:** 🚧 In Progress (Phases 1-2 Complete)
+
+**Objective:** Design and implement `CaptureFacade` trait with platform backend registration, image encoding pipeline, and temp file ResourceLink generation.
+
+**Deliverables:**
+- ⏳ CaptureFacade trait with async methods for all backends
+- ⏳ MockBackend implementation for E2E testing
+- ⏳ Image encoding pipeline (PNG/WebP/JPEG)
+- ⏳ Temp file management with cleanup on exit
+- ⏳ MCP content builders (image blocks + ResourceLinks)
+- ✅ Extended model types (WindowSelector, CaptureOptions, etc.)
+- ✅ Comprehensive error types with remediation hints
+- 🚧 44+ tests so far (24 model + 20 error, target: 40+ total new)
+
+---
+
+### Phase 1: Extended Model Types (2h) ✅ COMPLETED (2025-10-13)
+- [x] Add `WindowSelector` struct to model.rs (title_substring_or_regex, class, exe)
+- [x] Add `WindowInfo` struct (id, title, class, owner, pid, backend)
+- [x] Add `ImageFormat` enum (Png, Webp, Jpeg)
+- [x] Add `CaptureOptions` struct (format, quality, scale, include_cursor, region, wayland_source)
+- [x] Add `Region` struct (x, y, width, height)
+- [x] Add `WindowHandle` type alias (String)
+- [x] Add `Capabilities` struct (supports_cursor, supports_region, etc.)
+- [x] Add `WaylandSource` enum (placeholder for M2)
+- [x] Derive Serialize, Deserialize, JsonSchema for all new types
+- [x] Write unit tests for JSON serialization/deserialization
+- [x] Add validation for quality (0-100) and scale (0.1-2.0) parameters
+- [x] Verify `cargo test` passes for new model tests
+
+**Exit Criteria:** ✅ All model types serialize correctly, 24 new tests pass
+
+---
+
+### Phase 2: Error Types (1.5h) ✅ COMPLETED (2025-10-13)
+- [x] Create src/error.rs
+- [x] Define `CaptureError` enum with thiserror derives
+- [x] Add `WindowNotFound` variant with selector details
+- [x] Add `PortalUnavailable` variant with portal name
+- [x] Add `PermissionDenied` variant with platform-specific remediation
+- [x] Add `EncodingFailed` variant with format details
+- [x] Add `CaptureTimeout` variant with duration
+- [x] Add `InvalidParameter` variant with parameter name
+- [x] Add `BackendNotAvailable` variant with backend type
+- [x] Implement Display trait with user-facing messages
+- [x] Add `remediation_hint()` method for actionable guidance
+- [x] Write unit tests for error message formatting
+- [x] Add conversion from std::io::Error to CaptureError
+- [x] Export error types from lib.rs
+
+**Exit Criteria:** ✅ All errors have clear messages with remediation hints, 20 tests pass (exceeds 8+ target)
+
+---
+
+### Phase 3: ImageBuffer Wrapper (2h) ⏳ Not Started
+- [ ] Create src/capture/image_buffer.rs
+- [ ] Define `ImageBuffer` struct wrapping image::DynamicImage
+- [ ] Implement `new()` from DynamicImage
+- [ ] Implement `scale(factor: f32)` method with validation
+- [ ] Implement `crop(region: Region)` method
+- [ ] Implement `dimensions()` -> (u32, u32)
+- [ ] Implement `to_rgba8()` conversion
+- [ ] Implement `as_bytes()` for raw access
+- [ ] Add `from_test_pattern()` helper for testing
+- [ ] Write unit tests for scale with edge cases (0.1x, 2.0x, invalid)
+- [ ] Write unit tests for crop with boundary checks
+- [ ] Write unit tests for dimension getters
+- [ ] Add module documentation with examples
+- [ ] Export from capture/mod.rs
+
+**Exit Criteria:** ✅ All transformation methods work correctly, 10+ tests pass
+
+---
+
+### Phase 4: Encoding Pipeline (3h) ⏳ Not Started
+- [ ] Create src/util/encode.rs
+- [ ] Implement `encode_png(buffer: &ImageBuffer) -> Result<Vec<u8>>`
+- [ ] Implement `encode_webp(buffer: &ImageBuffer, quality: u8) -> Result<Vec<u8>>`
+- [ ] Implement `encode_jpeg(buffer: &ImageBuffer, quality: u8) -> Result<Vec<u8>>`
+- [ ] Add quality parameter validation (clamp 0-100)
+- [ ] Implement `encode_image(buffer: &ImageBuffer, opts: &CaptureOptions) -> Result<Vec<u8>>`
+- [ ] Add format detection from file extension
+- [ ] Add MIME type helper: `mime_type_for_format(format: ImageFormat) -> &str`
+- [ ] Write unit tests for PNG encoding (lossless)
+- [ ] Write unit tests for WebP encoding with quality range (30, 80, 100)
+- [ ] Write unit tests for JPEG encoding with quality range (30, 80, 100)
+- [ ] Write size validation tests (WebP @ 80 < 200KB for 1920x1080)
+- [ ] Add benchmark for 1920x1080 encoding (target: <300ms PNG, <200ms WebP)
+- [ ] Add comprehensive error handling for encoding failures
+- [ ] Export functions from util/mod.rs
+
+**Exit Criteria:** ✅ All formats encode correctly, quality affects size, 12+ tests pass, benchmarks meet targets
+
+---
+
+### Phase 5: Temp File Management (2h) ⏳ Not Started
+- [ ] Create src/util/temp_files.rs
+- [ ] Define `TempFile` struct (path: PathBuf, timestamp: DateTime)
+- [ ] Define `TempFileManager` with Arc<Mutex<Vec<TempFile>>>
+- [ ] Implement `new()` constructor
+- [ ] Implement `create_temp_file(prefix: &str, ext: &str) -> Result<PathBuf>`
+- [ ] Generate unique timestamped filenames: `{prefix}-{timestamp}.{ext}`
+- [ ] Use system temp dir (std::env::temp_dir()) + "screenshot-mcp" subdir
+- [ ] Track created temp files in internal Vec
+- [ ] Implement `write_image(data: &[u8], format: ImageFormat) -> Result<(PathBuf, u64)>`
+- [ ] Implement `Drop` trait to cleanup all temp files
+- [ ] Add `cleanup_all()` method for manual cleanup
+- [ ] Write unit test for temp file creation
+- [ ] Write unit test for unique filename generation (3 files)
+- [ ] Write integration test for cleanup on drop
+- [ ] Add thread-safety tests with Arc::clone
+- [ ] Export from util/mod.rs
+
+**Exit Criteria:** ✅ Temp files created with unique names, cleanup on exit works, 8+ tests pass
+
+---
+
+### Phase 6: MCP Content Builders (2h) ⏳ Not Started
+- [ ] Create src/util/mcp_content.rs
+- [ ] Define `build_image_content(data: &[u8], mime_type: &str) -> ImageContent`
+- [ ] Implement base64 encoding for image data
+- [ ] Define `build_resource_link(path: &Path, mime_type: &str, size: u64, title: &str) -> ResourceLink`
+- [ ] Format file:// URI from PathBuf
+- [ ] Add title generation with timestamp: "{app} Screenshot - {iso8601}"
+- [ ] Define `build_capture_result(image_data: &[u8], file_path: &Path, opts: &CaptureOptions) -> CallToolResult`
+- [ ] Combine image content + resource link into single result
+- [ ] Add metadata field with capture info (dimensions, format, size)
+- [ ] Write unit tests for image content building
+- [ ] Write unit tests for resource link building with file:// URI format
+- [ ] Write unit tests for combined result structure
+- [ ] Verify MIME types match format
+- [ ] Export functions from util/mod.rs
+
+**Exit Criteria:** ✅ Dual-format output works correctly, 8+ tests pass
+
+---
+
+### Phase 7: CaptureFacade Trait (1.5h) ⏳ Not Started
+- [ ] Create src/capture/mod.rs
+- [ ] Define `CaptureFacade` trait with async_trait
+- [ ] Add `async fn list_windows(&self) -> Result<Vec<WindowInfo>>`
+- [ ] Add `async fn resolve_target(&self, selector: &WindowSelector) -> Result<WindowHandle>`
+- [ ] Add `async fn capture_window(&self, handle: WindowHandle, opts: &CaptureOptions) -> Result<ImageBuffer>`
+- [ ] Add `async fn capture_display(&self, display_id: Option<u32>, opts: &CaptureOptions) -> Result<ImageBuffer>`
+- [ ] Add `fn capabilities(&self) -> Capabilities`
+- [ ] Add trait bounds: `Send + Sync`
+- [ ] Write comprehensive trait documentation with examples
+- [ ] Document each method with params, returns, errors
+- [ ] Add usage examples in doc comments
+- [ ] Export trait publicly from lib.rs
+- [ ] Create capture/mock.rs stub file
+
+**Exit Criteria:** ✅ Trait compiles, well-documented
+
+---
+
+### Phase 8: MockBackend Implementation (3h) ⏳ Not Started
+- [ ] Implement `MockBackend` struct in src/capture/mock.rs
+- [ ] Add fields: configurable_delay: Option<Duration>, error_injection: Option<CaptureError>
+- [ ] Implement `new()` constructor with default values
+- [ ] Implement `with_delay(delay: Duration)` builder
+- [ ] Implement `with_error(error: CaptureError)` builder
+- [ ] Implement `list_windows()` -> return 3 mock windows (Firefox, VSCode, Terminal)
+- [ ] Implement `resolve_target()` -> fuzzy match against mock windows
+- [ ] Implement `capture_window()` -> generate test image (1920x1080 colored rectangle)
+- [ ] Use `ImageBuffer::from_test_pattern()` with gradients
+- [ ] Add configurable delay if set
+- [ ] Return injected error if set
+- [ ] Implement `capture_display()` -> generate full screen test image
+- [ ] Implement `capabilities()` -> return full support
+- [ ] Write unit tests for list_windows
+- [ ] Write unit tests for resolve_target with various selectors
+- [ ] Write integration test for full capture flow
+- [ ] Write test for error injection
+- [ ] Add performance test (<2s for capture flow)
+- [ ] Export MockBackend from capture/mod.rs
+
+**Exit Criteria:** ✅ MockBackend fully functional, 12+ tests pass, <2s capture time
+
+---
+
+### Phase 9: Update MCP Tools (2.5h) ⏳ Not Started
+- [ ] Update src/mcp.rs imports (add capture facade, temp file manager)
+- [ ] Add `backend: Arc<dyn CaptureFacade>` field to ScreenshotMcpServer
+- [ ] Add `temp_files: Arc<TempFileManager>` field
+- [ ] Update `new()` to accept backend and temp_files
+- [ ] Create `new_with_mock()` constructor for testing
+- [ ] Implement `list_windows` tool with #[tool] attribute
+- [ ] Call `backend.list_windows().await`
+- [ ] Return JSON array of WindowInfo
+- [ ] Implement `capture_window` tool with #[tool] attribute
+- [ ] Parse WindowSelector from tool params
+- [ ] Call `backend.resolve_target(selector).await`
+- [ ] Call `backend.capture_window(handle, opts).await`
+- [ ] Encode image using encode pipeline
+- [ ] Write to temp file using temp_files manager
+- [ ] Build dual-format result (image + ResourceLink)
+- [ ] Add error handling for all steps
+- [ ] Write integration test for list_windows tool
+- [ ] Write integration test for capture_window tool E2E
+- [ ] Update main.rs to initialize with MockBackend
+- [ ] Verify tools callable via stdio
+
+**Exit Criteria:** ✅ Both tools work E2E with MockBackend, 8+ tests pass
+
+---
+
+### Phase 10: Testing & Validation (3h) ⏳ Not Started
+- [ ] Run `cargo test` - verify all tests pass (target: 40+ new tests)
+- [ ] Run `cargo build --all-features` - verify builds successfully
+- [ ] Run `cargo clippy --all-targets --all-features -D warnings` - verify no warnings
+- [ ] Run `cargo fmt --check` - verify all files formatted
+- [ ] Update Cargo.toml with image crate features (png, jpeg, webp)
+- [ ] **T-M1-01:** Test capture_window with MockBackend → PNG image + ResourceLink with correct MIME
+- [ ] **T-M1-02:** Test encode 1920x1080 as WebP quality=80 → verify <200KB
+- [ ] **T-M1-03:** Test 3 sequential captures → verify 3 unique temp files with timestamps
+- [ ] **T-M1-04:** Test process exit → verify temp files cleaned up
+- [ ] Run performance benchmarks (encoding <300ms PNG, <200ms WebP)
+- [ ] Verify full capture flow <2s (P95)
+- [ ] Check memory usage (<200MB peak)
+- [ ] Run integration tests with MockBackend
+- [ ] Verify no memory leaks with valgrind/sanitizers
+- [ ] Update documentation as needed
+
+**Exit Criteria:** ✅ All acceptance tests pass, performance targets met, 40+ total new tests
+
+---
+
+## M1 Exit Criteria Checklist
+
+### Build & Compile
+- [ ] `cargo build --all-features` succeeds on Linux
+- [ ] No compilation errors or warnings
+- [ ] Image crate features configured (png, jpeg, webp)
+
+### Testing
+- [ ] `cargo test` passes all tests (target: 63+ total tests, 40+ new for M1)
+- [ ] Extended model tests pass (15+ tests)
+- [ ] Error type tests pass (8+ tests)
+- [ ] ImageBuffer tests pass (10+ tests)
+- [ ] Encoding pipeline tests pass (12+ tests)
+- [ ] Temp file management tests pass (8+ tests)
+- [ ] MCP content builder tests pass (8+ tests)
+- [ ] MockBackend tests pass (12+ tests)
+- [ ] MCP tool integration tests pass (8+ tests)
+
+### Code Quality
+- [ ] `cargo clippy --all-targets --all-features -D warnings` clean
+- [ ] `cargo fmt --check` shows all files formatted
+- [ ] All public APIs documented
+- [ ] No unsafe code
+
+### Functionality
+- [ ] MockBackend generates 1920x1080 test images
+- [ ] PNG/WebP/JPEG encoding works with quality control
+- [ ] Temp files persist across captures
+- [ ] Temp files cleanup on process exit
+- [ ] list_windows returns mock data
+- [ ] capture_window returns dual-format output (image + ResourceLink)
+
+### Performance
+- [ ] Full capture flow <2s (P95)
+- [ ] PNG encoding (1920x1080) <300ms
+- [ ] WebP encoding (1920x1080) <200ms
+- [ ] Memory peak <200MB
+
+### Acceptance Tests
+- [ ] **T-M1-01:** capture_window → PNG image + ResourceLink with correct MIME
+- [ ] **T-M1-02:** Encode 1920x1080 as WebP quality=80 → <200KB
+- [ ] **T-M1-03:** 3 captures → 3 unique timestamped temp files
+- [ ] **T-M1-04:** Process exits → temp files cleaned up
+
+### Error Handling
+- [ ] All CaptureError variants have user-facing messages
+- [ ] Error messages include remediation hints
+- [ ] Errors propagate correctly through call stack
+
+---
+
+## M1 Implementation Notes
+
+### New Files to Create
+- `src/error.rs` - Error types with remediation hints
+- `src/capture/mod.rs` - CaptureFacade trait definition
+- `src/capture/image_buffer.rs` - Image wrapper with transformations
+- `src/capture/mock.rs` - MockBackend implementation
+- `src/util/encode.rs` - Image encoding pipeline
+- `src/util/temp_files.rs` - Temp file management
+- `src/util/mcp_content.rs` - MCP content builders
+
+### Dependencies to Add
+- `image = { version = "0.25", features = ["png", "jpeg", "webp"] }`
+- `base64 = "0.22"`
+- `chrono = "0.4"` (for timestamps)
+
+### Key Architectural Decisions
+- **Trait-based abstraction:** CaptureFacade allows pluggable backends
+- **MockBackend first:** Build testing infrastructure before real backends
+- **Dual-format output:** Inline images + file ResourceLinks for flexibility
+- **Temp file lifecycle:** Cleanup on Drop ensures no resource leaks
+- **Quality parameters:** Exposed to users for bandwidth/quality tradeoffs
+
+### Phase Progress
+- Phase 1: ✅ COMPLETED (12/12 tasks)
+- Phase 2: ✅ COMPLETED (14/14 tasks)
+- Phase 3: ⏳ Not Started (0/14 tasks)
+- Phase 4: ⏳ Not Started (0/15 tasks)
+- Phase 5: ⏳ Not Started (0/16 tasks)
+- Phase 6: ⏳ Not Started (0/13 tasks)
+- Phase 7: ⏳ Not Started (0/13 tasks)
+- Phase 8: ⏳ Not Started (0/19 tasks)
+- Phase 9: ⏳ Not Started (0/20 tasks)
+- Phase 10: ⏳ Not Started (0/15 tasks)
+
+**Overall M1 Progress: 26/151 tasks (17.2%) - Phases 1-2 COMPLETE! 🎉**
