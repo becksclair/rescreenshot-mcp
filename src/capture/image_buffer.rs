@@ -16,10 +16,10 @@
 //! let scaled = img.scale(0.5).unwrap();
 //! assert_eq!(scaled.dimensions(), (960, 540));
 //!
-//! // Crop a region
-//! let region = Region::new(100, 100, 800, 600);
+//! // Crop a region (fits within 960x540)
+//! let region = Region::new(100, 100, 800, 400);
 //! let cropped = scaled.crop(region).unwrap();
-//! assert_eq!(cropped.dimensions(), (800, 600));
+//! assert_eq!(cropped.dimensions(), (800, 400));
 //! ```
 
 use image::GenericImageView;
