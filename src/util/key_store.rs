@@ -38,7 +38,7 @@
 
 #[cfg(feature = "linux-wayland")]
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::Write,
     path::PathBuf,
@@ -103,6 +103,11 @@ pub struct KeyStore {
     file_path:         Option<PathBuf>,
     /// Cached encryption key for file operations
     encryption_key:    Option<[u8; 32]>,
+    /// In-memory index of all known source IDs (tokens may live in keyring or
+    /// file)
+    source_index:      Arc<RwLock<HashSet<String>>>,
+    /// Path to persisted source ID index
+    index_path:        PathBuf,
 }
 
 #[cfg(feature = "linux-wayland")]
@@ -137,13 +142,31 @@ impl KeyStore {
             }
         };
 
-        Self {
+        // Load persisted source index (includes keyring + file-backed tokens)
+        let index_path = Self::get_index_path();
+        let source_index = match Self::load_index(&index_path) {
+            Ok(index) => Arc::new(RwLock::new(index)),
+            Err(e) => {
+                tracing::warn!("Failed to load Wayland source index: {}", e);
+                Arc::new(RwLock::new(HashSet::new()))
+            }
+        };
+
+        let instance = Self {
             service_name,
             keyring_available: Arc::new(OnceLock::new()),
             file_store,
             file_path: Some(file_path),
             encryption_key: Some(encryption_key),
+            source_index,
+            index_path,
+        };
+
+        if let Err(e) = instance.rebuild_index_from_file_store() {
+            tracing::warn!("Failed to backfill Wayland source index from file store: {}", e);
         }
+
+        instance
     }
 
     /// Stores a token for the given source ID
@@ -192,7 +215,10 @@ impl KeyStore {
         // For subsequent calls, try keyring if available
         if use_keyring && self.keyring_available.get().copied() == Some(true) {
             match self.store_in_keyring(&key, token) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.record_source_id(source_id)?;
+                    return Ok(());
+                }
                 Err(e) => {
                     tracing::warn!("Keyring operation failed: {}", e);
                     // Fall through to file storage
@@ -201,7 +227,9 @@ impl KeyStore {
         }
 
         // Store in encrypted file
-        self.store_in_file(source_id, token)
+        self.store_in_file(source_id, token)?;
+        self.record_source_id(source_id)?;
+        Ok(())
     }
 
     /// Retrieves a token for the given source ID
@@ -285,7 +313,9 @@ impl KeyStore {
         }
 
         // Delete from file storage
-        self.delete_from_file(source_id)
+        self.delete_from_file(source_id)?;
+        self.remove_source_id(source_id)?;
+        Ok(())
     }
 
     /// Checks if a token exists for the given source ID
@@ -316,6 +346,28 @@ impl KeyStore {
             Some(_) => Ok(true),
             None => Ok(false),
         }
+    }
+
+    /// Returns all known source IDs that currently have stored tokens
+    ///
+    /// Source IDs are persisted even when tokens are stored exclusively in the
+    /// system keyring, enabling enumeration for user interfaces.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Vec<String>)` sorted alphabetically
+    /// - `Err(CaptureError)` if index access fails
+    pub fn list_source_ids(&self) -> CaptureResult<Vec<String>> {
+        let index = self
+            .source_index
+            .read()
+            .map_err(|e| CaptureError::EncryptionFailed {
+                reason: format!("Failed to lock source index: {}", e),
+            })?;
+
+        let mut ids: Vec<String> = index.iter().cloned().collect();
+        ids.sort();
+        Ok(ids)
     }
 
     /// Atomically rotates a token (replaces old token with new one)
@@ -447,6 +499,21 @@ impl KeyStore {
         data_dir.join("screenshot-mcp").join("token-store.enc")
     }
 
+    /// Gets the path to the persisted source index file
+    fn get_index_path() -> PathBuf {
+        let data_dir = if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
+            PathBuf::from(dir)
+        } else if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".local/share")
+        } else {
+            PathBuf::from("/tmp")
+        };
+
+        data_dir
+            .join("screenshot-mcp")
+            .join("wayland-source-index.json")
+    }
+
     /// Derives a machine-specific encryption key using HKDF
     ///
     /// Uses HKDF-SHA256 with hostname + username as input key material
@@ -496,6 +563,75 @@ impl KeyStore {
         Ok(())
     }
 
+    /// Adds a source ID to the persisted index (no-op if already present)
+    fn record_source_id(&self, source_id: &str) -> CaptureResult<()> {
+        let mut index = self
+            .source_index
+            .write()
+            .map_err(|e| CaptureError::EncryptionFailed {
+                reason: format!("Failed to lock source index: {}", e),
+            })?;
+
+        if index.insert(source_id.to_string()) {
+            self.save_index(&index)?;
+        }
+
+        Ok(())
+    }
+
+    /// Removes a source ID from the persisted index (no-op if absent)
+    fn remove_source_id(&self, source_id: &str) -> CaptureResult<()> {
+        let mut index = self
+            .source_index
+            .write()
+            .map_err(|e| CaptureError::EncryptionFailed {
+                reason: format!("Failed to lock source index: {}", e),
+            })?;
+
+        if index.remove(source_id) {
+            self.save_index(&index)?;
+        }
+
+        Ok(())
+    }
+
+    /// Syncs the source index with any tokens already present in the file store
+    fn rebuild_index_from_file_store(&self) -> CaptureResult<()> {
+        let keys: Vec<String> = {
+            let store = self
+                .file_store
+                .read()
+                .map_err(|e| CaptureError::EncryptionFailed {
+                    reason: format!("Failed to lock file store: {}", e),
+                })?;
+            store.keys().cloned().collect()
+        };
+
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        let mut index = self
+            .source_index
+            .write()
+            .map_err(|e| CaptureError::EncryptionFailed {
+                reason: format!("Failed to lock source index: {}", e),
+            })?;
+
+        let mut changed = false;
+        for key in keys {
+            if index.insert(key) {
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.save_index(&index)?;
+        }
+
+        Ok(())
+    }
+
     /// Retrieves token from file storage
     fn retrieve_from_file(&self, source_id: &str) -> CaptureResult<Option<String>> {
         let store = self
@@ -525,6 +661,33 @@ impl KeyStore {
 
         // Serialize + encrypt + write (no lock held)
         self.save_to_file(&store_snapshot)?;
+        Ok(())
+    }
+
+    /// Saves the source index to disk as JSON array
+    fn save_index(&self, index: &HashSet<String>) -> CaptureResult<()> {
+        let mut sorted: Vec<&String> = index.iter().collect();
+        sorted.sort();
+
+        let data = serde_json::to_vec(&sorted).map_err(|e| CaptureError::EncryptionFailed {
+            reason: format!("Failed to serialize source index: {}", e),
+        })?;
+
+        if let Some(parent) = self.index_path.parent() {
+            fs::create_dir_all(parent).map_err(CaptureError::IoError)?;
+        }
+
+        let mut file = fs::File::create(&self.index_path).map_err(CaptureError::IoError)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = file.metadata()?.permissions();
+            permissions.set_mode(0o600);
+            fs::set_permissions(&self.index_path, permissions).map_err(CaptureError::IoError)?;
+        }
+
+        file.write_all(&data).map_err(CaptureError::IoError)?;
         Ok(())
     }
 
@@ -650,6 +813,25 @@ impl KeyStore {
                 Err(e)
             }
         }
+    }
+
+    /// Loads persisted source index from disk (plain JSON array)
+    fn load_index(index_path: &PathBuf) -> CaptureResult<HashSet<String>> {
+        if !index_path.exists() {
+            return Ok(HashSet::new());
+        }
+
+        let data = fs::read(index_path).map_err(CaptureError::IoError)?;
+        if data.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let entries: Vec<String> =
+            serde_json::from_slice(&data).map_err(|e| CaptureError::EncryptionFailed {
+                reason: format!("Failed to deserialize source index: {}", e),
+            })?;
+
+        Ok(entries.into_iter().collect())
     }
 
     /// Loads v1 format (legacy with fixed nonce)
@@ -782,6 +964,30 @@ mod tests {
 
         // Cleanup
         store.delete_token("test-source").unwrap();
+    }
+
+    #[test]
+    fn test_list_source_ids_tracks_tokens() {
+        let store = KeyStore::new();
+
+        // Ensure clean baseline
+        assert!(!store
+            .list_source_ids()
+            .unwrap()
+            .contains(&"list-test-1".to_string()));
+
+        store.store_token("list-test-1", "token1").unwrap();
+        store.store_token("list-test-2", "token2").unwrap();
+
+        let ids = store.list_source_ids().unwrap();
+        assert!(ids.contains(&"list-test-1".to_string()));
+        assert!(ids.contains(&"list-test-2".to_string()));
+
+        store.delete_token("list-test-1").unwrap();
+        let ids_after_delete = store.list_source_ids().unwrap();
+        assert!(!ids_after_delete.contains(&"list-test-1".to_string()));
+
+        store.delete_token("list-test-2").unwrap();
     }
 
     #[test]

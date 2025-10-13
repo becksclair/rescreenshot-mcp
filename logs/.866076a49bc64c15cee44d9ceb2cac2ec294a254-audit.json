@@ -9,6 +9,11 @@
             "date": 1760388731642,
             "name": "/home/rebecca/projects/rescreenshot-mcp/logs/mcp-puppeteer-2025-10-13.log",
             "hash": "367f88154a4942eed0edd81f794404e885f2d9d5329a315175e0287353f4f918"
+        },
+        {
+            "date": 1760393791850,
+            "name": "/home/rebecca/projects/rescreenshot-mcp/logs/mcp-puppeteer-2025-10-14.log",
+            "hash": "1d452a84786787b9c12cba9e07a7a54cf1670a93c29138c2a0ab477154da1b2d"
         }
     ],
     "hashType": "sha256"

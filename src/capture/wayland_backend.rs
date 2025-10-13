@@ -118,9 +118,10 @@ impl WaylandBackend {
 
     /// Captures a single frame from a PipeWire stream node
     ///
-    /// This function connects to the specified PipeWire node, captures one frame,
-    /// and converts it to a `DynamicImage`. It handles the complexity of PipeWire's
-    /// async stream API for one-shot frame capture.
+    /// This function connects to the specified PipeWire node, captures one
+    /// frame, and converts it to a `DynamicImage`. It handles the
+    /// complexity of PipeWire's async stream API for one-shot frame
+    /// capture.
     ///
     /// # Arguments
     ///
@@ -129,11 +130,13 @@ impl WaylandBackend {
     /// # Returns
     ///
     /// - `Ok(DynamicImage)` with the captured frame in RGBA8 format
-    /// - `Err(BackendNotAvailable)` if PipeWire connection fails or no frame received
+    /// - `Err(BackendNotAvailable)` if PipeWire connection fails or no frame
+    ///   received
     ///
     /// # Errors
     ///
-    /// - [`CaptureError::BackendNotAvailable`] - PipeWire not available or connection failed
+    /// - [`CaptureError::BackendNotAvailable`] - PipeWire not available or
+    ///   connection failed
     /// - [`CaptureError::CaptureTimeout`] - No frame received within timeout
     ///
     /// # Implementation Note
@@ -190,15 +193,11 @@ impl WaylandBackend {
             })?;
 
             // Create stream with callbacks
-            let stream = Stream::new(
-                &core,
-                "screenshot-mcp",
-                properties! {
-                    *keys::MEDIA_TYPE => "Video",
-                    *keys::MEDIA_CATEGORY => "Capture",
-                    *keys::MEDIA_ROLE => "Screen",
-                },
-            )
+            let stream = Stream::new(&core, "screenshot-mcp", properties! {
+                *keys::MEDIA_TYPE => "Video",
+                *keys::MEDIA_CATEGORY => "Capture",
+                *keys::MEDIA_ROLE => "Screen",
+            })
             .map_err(|e| {
                 tracing::error!("Failed to create PipeWire Stream: {}", e);
                 CaptureError::BackendNotAvailable {
@@ -222,7 +221,9 @@ impl WaylandBackend {
 
                     // TODO: Parse video format to get dimensions from _param
                     // For now, we'll infer dimensions from buffer size
-                    tracing::debug!("Received format parameter (dimensions inference from buffer size)");
+                    tracing::debug!(
+                        "Received format parameter (dimensions inference from buffer size)"
+                    );
                 })
                 .process(move |stream, _user_data| {
                     // Only capture once
@@ -234,7 +235,10 @@ impl WaylandBackend {
                     if let Some(mut buffer) = stream.dequeue_buffer() {
                         if let Some(chunk) = buffer.datas_mut().first_mut() {
                             if let Some(data_slice) = chunk.data() {
-                                tracing::debug!("Captured PipeWire frame ({} bytes)", data_slice.len());
+                                tracing::debug!(
+                                    "Captured PipeWire frame ({} bytes)",
+                                    data_slice.len()
+                                );
 
                                 // Copy frame data
                                 *frame_data_cb.lock().unwrap() = Some(data_slice.to_vec());
@@ -305,13 +309,19 @@ impl WaylandBackend {
 
                 // Common resolutions to try
                 let common_resolutions = [
-                    (1920, 1080), (2560, 1440), (3840, 2160), // 16:9
-                    (1920, 1200), (2560, 1600), // 16:10
-                    (1024, 768), (1280, 1024), // 4:3
-                    (1366, 768), (1600, 900), // Laptop screens
+                    (1920, 1080),
+                    (2560, 1440),
+                    (3840, 2160), // 16:9
+                    (1920, 1200),
+                    (2560, 1600), // 16:10
+                    (1024, 768),
+                    (1280, 1024), // 4:3
+                    (1366, 768),
+                    (1600, 900), // Laptop screens
                 ];
 
-                common_resolutions.iter()
+                common_resolutions
+                    .iter()
                     .find(|(w, h)| (*w as usize) * (*h as usize) == pixel_count)
                     .copied()
                     .unwrap_or_else(|| {
@@ -371,7 +381,6 @@ impl WaylandBackend {
 
         Ok(result)
     }
-
 
     /// Creates an ephemeral portal connection
     ///
@@ -629,24 +638,41 @@ pub struct PrimeConsentResult {
 
 #[async_trait]
 impl CaptureFacade for WaylandBackend {
-    /// Lists all capturable windows (NOT SUPPORTED on Wayland)
+    /// Lists Wayland capture targets derived from stored restore tokens
     ///
-    /// Wayland's security model does not allow window enumeration. Applications
-    /// must use the `prime_wayland_consent` tool to obtain permission and a
-    /// restore token for headless capture.
-    ///
-    /// # Returns
-    ///
-    /// Always returns [`CaptureError::BackendNotAvailable`] with a remediation
-    /// hint explaining how to use Wayland restore tokens.
-    ///
-    /// # Errors
-    ///
-    /// This method always fails with actionable guidance for users.
+    /// Returns synthetic `WindowInfo` entries that map to primed Wayland
+    /// sources. When no tokens exist, a single instructional entry is
+    /// returned guiding the user to run `prime_wayland_consent`.
     async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
-        Err(CaptureError::BackendNotAvailable {
-            backend: BackendType::Wayland,
-        })
+        let source_ids = self.key_store.list_source_ids()?;
+
+        if source_ids.is_empty() {
+            return Ok(vec![WindowInfo::new(
+                "wayland:prime-required".to_string(),
+                "No Wayland sources primed. Run prime_wayland_consent to create one.".to_string(),
+                "WaylandInstructions".to_string(),
+                "screenshot-mcp".to_string(),
+                0,
+                BackendType::Wayland,
+            )]);
+        }
+
+        Ok(source_ids
+            .into_iter()
+            .map(|source_id| {
+                WindowInfo::new(
+                    format!("wayland:{}", source_id),
+                    format!(
+                        "Wayland restore token '{}' (use exe='wayland:{}')",
+                        source_id, source_id
+                    ),
+                    "WaylandRestoreToken".to_string(),
+                    "prime_wayland_consent".to_string(),
+                    0,
+                    BackendType::Wayland,
+                )
+            })
+            .collect())
     }
 
     /// Resolves a window selector to a window handle
@@ -768,7 +794,8 @@ impl CaptureFacade for WaylandBackend {
                     None => {
                         // FALLBACK TRIGGER: No token found, fall back to display capture
                         tracing::warn!(
-                            "No restore token found for source '{}', falling back to display capture",
+                            "No restore token found for source '{}', falling back to display \
+                             capture",
                             handle
                         );
                         return self.capture_display(None, opts).await;
@@ -1177,13 +1204,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_windows_returns_error() {
+    async fn test_list_windows_returns_instruction_when_empty() {
         let key_store = Arc::new(KeyStore::new());
-        let backend = WaylandBackend::new(key_store);
+        let backend = WaylandBackend::new(Arc::clone(&key_store));
 
-        let result = backend.list_windows().await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CaptureError::BackendNotAvailable { .. }));
+        let windows = backend.list_windows().await.unwrap();
+        assert_eq!(windows.len(), 1);
+        let entry = &windows[0];
+        assert_eq!(entry.id, "wayland:prime-required");
+        assert_eq!(entry.backend, BackendType::Wayland);
+        assert!(
+            entry.title.to_lowercase().contains("prime_wayland_consent"),
+            "Title should mention prime_wayland_consent"
+        );
+
+        // No tokens were created; ensure index remains empty
+        assert!(key_store.list_source_ids().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_windows_returns_primed_sources() {
+        let key_store = Arc::new(KeyStore::new());
+        let backend = WaylandBackend::new(Arc::clone(&key_store));
+
+        key_store
+            .store_token("wayland-default", "token-default")
+            .unwrap();
+        key_store
+            .store_token("firefox-dev", "token-firefox")
+            .unwrap();
+
+        let mut windows = backend.list_windows().await.unwrap();
+        windows.sort_by(|a, b| a.id.cmp(&b.id));
+
+        assert_eq!(windows.len(), 2);
+
+        let first = &windows[0];
+        assert_eq!(first.id, "wayland:firefox-dev");
+        assert!(first.title.contains("firefox-dev"), "Title should include source id");
+
+        let second = &windows[1];
+        assert_eq!(second.id, "wayland:wayland-default");
+        assert!(second.title.contains("wayland-default"), "Title should include source id");
+
+        // Cleanup tokens to avoid polluting persistent store
+        key_store.delete_token("firefox-dev").unwrap();
+        key_store.delete_token("wayland-default").unwrap();
     }
 
     #[tokio::test]
@@ -1278,8 +1344,12 @@ mod tests {
             .await;
         assert!(result.is_err());
         // With fallback enabled, no token triggers fallback to capture_display
-        // which fails with CaptureTimeout in test environment (portal connection times out)
-        assert!(matches!(result.unwrap_err(), CaptureError::CaptureTimeout { .. } | CaptureError::PortalUnavailable { .. }));
+        // which fails with CaptureTimeout in test environment (portal connection times
+        // out)
+        assert!(matches!(
+            result.unwrap_err(),
+            CaptureError::CaptureTimeout { .. } | CaptureError::PortalUnavailable { .. }
+        ));
     }
 
     #[tokio::test]
@@ -1290,7 +1360,11 @@ mod tests {
         let opts = CaptureOptions::default();
         let result = backend.capture_display(None, &opts).await;
         assert!(result.is_err());
-        // In test environment (no portal), capture_display fails with CaptureTimeout or PortalUnavailable
-        assert!(matches!(result.unwrap_err(), CaptureError::CaptureTimeout { .. } | CaptureError::PortalUnavailable { .. }));
+        // In test environment (no portal), capture_display fails with CaptureTimeout or
+        // PortalUnavailable
+        assert!(matches!(
+            result.unwrap_err(),
+            CaptureError::CaptureTimeout { .. } | CaptureError::PortalUnavailable { .. }
+        ));
     }
 }
