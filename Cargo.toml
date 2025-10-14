@@ -77,8 +77,8 @@ macos-backend = ["objc2-screen-capture-kit", "core-graphics"]
 # Image processing (M1)
 image-processing = ["image", "tempfile"]
 # Testing features (M2 Phase 9)
-integration-tests = []
-perf-tests = []
+integration-tests = ["linux-wayland"]
+perf-tests = ["linux-wayland"]
 
 [[bin]]
 name = "screenshot-mcp"

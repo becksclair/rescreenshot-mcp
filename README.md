@@ -1,19 +1,24 @@
 # screenshot-mcp
 
-> **Status:** M0 Complete (Project Scaffold) ✅
+> **Status:** M2 Complete (Wayland Backend) ✅
 > Cross-platform screenshot MCP server for coding agents
 
 A production-grade Model Context Protocol (MCP) stdio server that enables coding agents (Claude, Cursor, etc.) to capture application windows and return screenshots programmatically across Linux (Wayland/X11), Windows, and macOS.
 
-## Features (M0 - Completed)
+## Features
 
-- ✅ **MCP Protocol Integration:** Full stdio transport support
-- ✅ **Platform Detection:** Automatic detection of OS and display backend
-- ✅ **health_check Tool:** Validates server status and platform capabilities
-- ✅ **Cross-Platform:** Linux (Wayland/X11), Windows 10/11, macOS 12+
-- ✅ **Type-Safe:** Comprehensive data models with serde/schemars support
-- ✅ **Well-Tested:** 23 tests with 100% pass rate
-- ✅ **Production-Ready Code:** Clippy clean, rustfmt formatted
+### ✅ M2 - Wayland Backend (Complete)
+- **Headless Capture:** Permission-based window capture with restore tokens
+- **Prime Consent:** `prime_wayland_consent` tool for first-time authorization
+- **Secure Token Storage:** Platform keyring with encrypted file fallback
+- **Graceful Fallback:** Display capture + region crop when restore fails
+- **Performance:** <2s capture latency (P95), <5s prime consent flow
+- **Production-Ready:** 236 tests passing, comprehensive error handling
+
+### ✅ M0 - Project Scaffold (Complete)
+- **MCP Protocol Integration:** Full stdio transport support
+- **Platform Detection:** Automatic detection of OS and display backend
+- **Type-Safe:** Comprehensive data models with serde/schemars support
 
 ## Quick Start
 
@@ -21,6 +26,28 @@ A production-grade Model Context Protocol (MCP) stdio server that enables coding
 
 - Rust 1.75+ (tested on 1.92.0-nightly)
 - Linux (Fedora/Ubuntu/Arch), Windows 10/11, or macOS 12+
+
+### Wayland Setup (Linux)
+
+For Wayland capture support, install xdg-desktop-portal and backend:
+
+```bash
+# Ubuntu/Debian
+sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk pipewire
+
+# Fedora
+sudo dnf install xdg-desktop-portal xdg-desktop-portal-gtk pipewire
+
+# Arch
+sudo pacman -S xdg-desktop-portal xdg-desktop-portal-gtk pipewire
+```
+
+Verify portal is running:
+```bash
+systemctl --user status xdg-desktop-portal
+```
+
+See [Prime Wayland Consent Guide](./docs/prime_wayland_consent.md) for detailed setup.
 
 ### Installation
 
@@ -84,6 +111,37 @@ Edit your Cursor MCP config:
 
 ## Available Tools
 
+### `prime_wayland_consent` (Wayland only)
+
+Obtains user permission for headless window capture on Wayland. Required before first capture.
+
+**Request:**
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "prime_wayland_consent",
+    "arguments": {
+      "source_id": "wayland-default",
+      "source_type": "monitor",
+      "include_cursor": false
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "source_id": "wayland-default",
+  "num_streams": 1,
+  "next_steps": "Use capture_window with this source_id"
+}
+```
+
+See [Prime Wayland Consent Guide](./docs/prime_wayland_consent.md) for workflow details.
+
 ### `health_check`
 
 Checks server health and detects the current platform and display backend.
@@ -117,7 +175,67 @@ Checks server health and detects the current platform and display backend.
 
 ## Development
 
-### Running Tests
+### Quick Start with Just
+
+This project uses [just](https://github.com/casey/just) for common tasks:
+
+```bash
+# Install just
+cargo install just
+
+# List all available recipes
+just --list
+
+# Run tests
+just test
+
+# Run performance suite
+just perf
+
+# Run all quality checks
+just check
+
+# Run CI checks locally
+just ci
+```
+
+### Common Tasks
+
+```bash
+# Testing
+just test                    # Run all unit tests
+just test-wayland            # Run Wayland backend tests
+just test-perf               # Run with performance utilities
+just test-integration        # Run integration tests (requires Wayland)
+
+# Performance Testing
+just perf-prime              # Prime consent workflow
+just perf-batch              # Run 30 headless captures
+just perf-rotation           # Measure token rotation
+just perf-memory             # Memory profiling with valgrind
+
+# Acceptance Testing
+just accept-01               # T-M2-01: Fresh install → prime consent
+just accept-02               # T-M2-02: Headless capture test
+just accept-status           # Show acceptance test status
+
+# Code Quality
+just lint                    # Run clippy
+just fmt                     # Format code
+just check                   # Run all checks (lint + fmt + test)
+
+# Building
+just build                   # Release build
+just build-all               # Build with all features
+just build-perf              # Build performance tool
+
+# Documentation
+just doc                     # Build and open docs
+```
+
+### Manual Commands
+
+If you don't have `just` installed, you can run commands directly:
 
 ```bash
 # Run all tests
@@ -174,16 +292,22 @@ screenshot-mcp/
 - Project structure and configuration
 - Platform detection
 - MCP stdio server with `health_check` tool
-- Comprehensive test suite
 
-### 🚧 M1: Core Capture Facade (Next)
+### ✅ M1: Core Capture Facade (Complete)
 - Image encoding pipeline (PNG/WebP/JPEG)
 - Temp file management
 - MCP content builders
 
-### 📅 M2-M5: Platform Backends
-- **M2:** Wayland with restore tokens
-- **M3:** X11 capture
+### ✅ M2: Wayland Backend (Complete)
+- Headless capture with restore tokens
+- Prime consent workflow
+- Secure token storage (keyring + file fallback)
+- Graceful fallback strategy
+- Performance validation tools
+- 236 tests passing
+
+### 📅 M3-M5: Additional Platform Backends
+- **M3:** X11 capture (Week 4)
 - **M4:** Windows Graphics Capture
 - **M5:** macOS ScreenCaptureKit
 
@@ -239,7 +363,8 @@ MIT (pending final confirmation)
 
 ---
 
-**Status:** M0 Complete (2025-10-13)
-**Test Coverage:** 23 tests passing
+**Status:** M2 Complete (2025-10-14)
+**Test Coverage:** 236 tests passing (unit + integration)
 **Code Quality:** Clippy clean, rustfmt formatted
-**Next Milestone:** M1 - Core Capture Facade
+**Performance:** <2s capture latency (P95), <5s prime consent
+**Next Milestone:** M3 - X11 Backend

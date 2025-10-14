@@ -67,16 +67,16 @@ echo ""
 
 # Build with integration-tests feature
 echo -e "${BLUE}Building integration tests...${NC}"
-cargo build --tests --features integration-tests --quiet
+cargo build --tests --features linux-wayland --quiet
 
 # Run tests with --ignored flag (runs only #[ignore] tests)
 echo -e "${BLUE}Executing integration tests (user interaction may be required)...${NC}"
 echo ""
 
 if [ -n "$TEST_FILTER" ]; then
-    cargo test --features integration-tests -- --ignored "$TEST_FILTER"
+    cargo test --features linux-wayland -- --ignored "$TEST_FILTER"
 else
-    cargo test --features integration-tests -- --ignored
+    cargo test --features linux-wayland -- --ignored
 fi
 
 EXIT_CODE=$?

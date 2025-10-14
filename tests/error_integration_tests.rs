@@ -15,25 +15,19 @@
 //! - WAYLAND_DISPLAY environment variable set
 //! - PipeWire runtime available
 
+// Import shared test utilities
+mod common;
+
 #[cfg(all(test, feature = "linux-wayland"))]
 mod wayland_error_integration {
     use std::sync::Arc;
 
     use screenshot_mcp::{
-        capture::{wayland_backend::WaylandBackend, CaptureFacade},
-        model::{CaptureOptions, SourceType},
-        util::key_store::KeyStore,
+        capture::CaptureFacade, model::SourceType, util::key_store::KeyStore,
     };
 
     // Import test harness utilities
-    mod common;
-    use common::wayland_harness::*;
-
-    /// Helper to create WaylandBackend instance for tests
-    fn create_backend() -> WaylandBackend {
-        let key_store = Arc::new(KeyStore::new());
-        WaylandBackend::new(key_store)
-    }
+    use crate::common::wayland_harness::*;
 
     // ========================================================================
     // E2E Error Scenario Stubs (Manual Testing)
@@ -177,7 +171,6 @@ mod wayland_error_integration {
         eprintln!("1. First run prime_consent separately to store a valid token");
         eprintln!("2. Then run this test within same compositor session");
         eprintln!("3. Or manually store a real token for testing");
-        eprintln!("");
 
         // NOTE: This test expects a real token to be already stored
         // In real usage: user would prime first, then capture

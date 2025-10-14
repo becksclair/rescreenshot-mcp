@@ -413,10 +413,14 @@ impl WaylandBackend {
     /// Portal connections are cheap to create and don't implement `Sync`,
     /// so we create them on-demand per-operation rather than storing them.
     ///
+    /// **Test Mode**: In test builds (`#[cfg(test)]`), this method returns
+    /// an immediate error without attempting a real DBus connection, preventing
+    /// system permission dialogs during automated testing.
+    ///
     /// # Returns
     ///
-    /// - `Ok(Screencast)` on successful connection
-    /// - `Err(PortalUnavailable)` if portal service is not running
+    /// - `Ok(Screencast)` on successful connection (production only)
+    /// - `Err(PortalUnavailable)` if portal service is not running or in test mode
     ///
     /// # Errors
     ///
@@ -424,7 +428,9 @@ impl WaylandBackend {
     /// - xdg-desktop-portal service is not running
     /// - ScreenCast portal interface is not available
     /// - DBus connection fails
-    #[allow(dead_code)] // Will be used in Phase 4-6
+    /// - Running in test mode (`cargo test`)
+    #[cfg(not(test))]
+    #[allow(dead_code)]
     async fn portal(&self) -> CaptureResult<ashpd::desktop::screencast::Screencast<'static>> {
         ashpd::desktop::screencast::Screencast::new()
             .await
@@ -434,6 +440,25 @@ impl WaylandBackend {
                     portal: "org.freedesktop.portal.ScreenCast".to_string(),
                 }
             })
+    }
+
+    /// Test-mode portal stub (prevents real DBus connections during tests)
+    ///
+    /// This version is compiled when running `cargo test` and immediately
+    /// returns an error without attempting portal connection. This prevents:
+    /// - System permission dialogs during automated testing
+    /// - DBus connection attempts in CI environments
+    /// - Test suite hangs waiting for user interaction
+    ///
+    /// Unit tests validate error handling paths; integration tests marked
+    /// with `#[ignore]` can test real portal behavior on live Wayland systems.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    async fn portal(&self) -> CaptureResult<ashpd::desktop::screencast::Screencast<'static>> {
+        Err(CaptureError::PortalUnavailable {
+            portal: "org.freedesktop.portal.ScreenCast (test mode - no real connection)"
+                .to_string(),
+        })
     }
 
     /// Wraps a future with a timeout

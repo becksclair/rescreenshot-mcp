@@ -76,7 +76,7 @@ use crate::error::{CaptureError, CaptureResult};
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use screenshot_mcp::util::key_store::KeyStore;
 ///
 /// let store = KeyStore::new();

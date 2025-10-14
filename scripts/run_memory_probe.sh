@@ -9,7 +9,7 @@
 # Prerequisites:
 # - valgrind installed
 # - Live Wayland session with portal
-# - Valid restore token
+# - Valid restore token (run prime-consent first)
 #
 # Usage:
 #   ./scripts/run_memory_probe.sh [NUM_CAPTURES]
@@ -27,6 +27,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 NUM_CAPTURES="${1:-10}"
+MEMORY_THRESHOLD_MB=200
+SOURCE_ID="wayland-mem-$(date +%s)"
 
 echo -e "${BLUE}=== Memory Profiling Script ===${NC}"
 echo -e "${BLUE}Target: ${NUM_CAPTURES} sequential captures${NC}"
@@ -52,42 +54,148 @@ echo ""
 
 # Build release binary
 echo -e "${BLUE}Building release binary...${NC}"
-cargo build --release --features linux-wayland --quiet
+cargo build --bin measure-capture --features perf-tests,linux-wayland --release --quiet
 echo -e "${GREEN}✓ Build complete${NC}"
 echo ""
 
 # Memory profiling parameters
-MASSIF_OUT="massif.out.$$"
-MEMORY_THRESHOLD_MB=200
+RESULTS_DIR="./perf-results"
+TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+MASSIF_OUT="$RESULTS_DIR/massif-$TIMESTAMP.out"
+LEAK_LOG="$RESULTS_DIR/leak-check-$TIMESTAMP.log"
 
-echo -e "${BLUE}Starting memory profiling...${NC}"
-echo -e "${YELLOW}NOTE: This requires a test harness binary for sequential captures.${NC}"
-echo -e "${YELLOW}Current implementation is a stub. Full implementation pending (Task 11).${NC}"
+mkdir -p "$RESULTS_DIR"
+
+# ==============================================================================
+# Step 1: Prime Consent (to get valid token)
+# ==============================================================================
+
+echo -e "${BLUE}Step 1: Priming consent...${NC}"
+echo -e "${YELLOW}You will see a portal dialog. Grant permission to continue.${NC}"
 echo ""
 
-echo -e "${YELLOW}=== Memory Profiling Status ===${NC}"
-echo -e "${YELLOW}This script is a stub that shows the intended workflow.${NC}"
+if ! ./target/release/measure-capture prime-consent "$SOURCE_ID" > /dev/null 2>&1; then
+    echo -e "${RED}✗ Prime consent failed${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Prime consent successful${NC}"
 echo ""
-echo -e "${BLUE}Intended workflow:${NC}"
-echo "1. Run Valgrind Massif on capture operations"
-echo "2. Perform ${NUM_CAPTURES} sequential captures"
-echo "3. Analyze peak memory usage (target: <200MB)"
-echo "4. Check for memory leaks (using valgrind --leak-check=full)"
+sleep 2
+
+# ==============================================================================
+# Step 2: Memory Peak Measurement with Massif
+# ==============================================================================
+
+echo -e "${BLUE}Step 2: Measuring memory peak with Valgrind Massif...${NC}"
+echo -e "${YELLOW}Running ${NUM_CAPTURES} captures under Massif (this will be slow)...${NC}"
 echo ""
-echo -e "${BLUE}Example Valgrind command:${NC}"
-echo "  valgrind --tool=massif --massif-out-file=${MASSIF_OUT} \\"
-echo "    ./target/release/screenshot-mcp [capture-command]"
+
+valgrind --tool=massif \
+    --massif-out-file="$MASSIF_OUT" \
+    --pages-as-heap=yes \
+    ./target/release/measure-capture headless-batch --captures "$NUM_CAPTURES" "$SOURCE_ID" > /dev/null 2>&1 || true
+
+echo -e "${GREEN}✓ Massif profiling complete${NC}"
 echo ""
-echo -e "${BLUE}To analyze results:${NC}"
-echo "  ms_print ${MASSIF_OUT}"
-echo "  grep \"Peak\" ${MASSIF_OUT}"
+
+# Parse peak memory from Massif output
+if [ -f "$MASSIF_OUT" ]; then
+    PEAK_BYTES=$(grep -oP 'mem_heap_B=\K\d+' "$MASSIF_OUT" | sort -n | tail -1)
+    PEAK_MB=$((PEAK_BYTES / 1024 / 1024))
+
+    echo -e "${BLUE}Memory Peak Analysis:${NC}"
+    echo "  Peak Memory: ${PEAK_MB}MB"
+    echo "  Threshold: <${MEMORY_THRESHOLD_MB}MB"
+
+    if [ "$PEAK_MB" -lt "$MEMORY_THRESHOLD_MB" ]; then
+        echo -e "  Result: ${GREEN}✓ PASS${NC}"
+        MEMORY_PASSED=true
+    else
+        echo -e "  Result: ${RED}✗ FAIL (exceeded threshold by $((PEAK_MB - MEMORY_THRESHOLD_MB))MB)${NC}"
+        MEMORY_PASSED=false
+    fi
+else
+    echo -e "${YELLOW}WARNING: Massif output file not found${NC}"
+    MEMORY_PASSED=false
+fi
+
 echo ""
-echo -e "${BLUE}For manual memory validation:${NC}"
-echo "  1. Run: /usr/bin/time -v ./target/release/screenshot-mcp [capture]"
-echo "  2. Check 'Maximum resident set size' in output"
-echo "  3. Verify < ${MEMORY_THRESHOLD_MB}MB (${MEMORY_THRESHOLD_MB}000 KB)"
+
+# ==============================================================================
+# Step 3: Memory Leak Check
+# ==============================================================================
+
+echo -e "${BLUE}Step 3: Checking for memory leaks...${NC}"
+echo -e "${YELLOW}Running ${NUM_CAPTURES} captures with leak detection...${NC}"
 echo ""
-echo -e "${YELLOW}Full implementation requires:${NC}"
-echo "  - Test harness binary that performs sequential captures"
-echo "  - Integration with measure-capture tool (Task 11)"
-echo "  - Automated parsing of Massif output"
+
+valgrind --leak-check=full \
+    --show-leak-kinds=all \
+    --log-file="$LEAK_LOG" \
+    ./target/release/measure-capture headless-batch --captures "$NUM_CAPTURES" "$SOURCE_ID" > /dev/null 2>&1 || true
+
+echo -e "${GREEN}✓ Leak check complete${NC}"
+echo ""
+
+# Parse leak results
+if [ -f "$LEAK_LOG" ]; then
+    DEFINITELY_LOST=$(grep -oP 'definitely lost: \K[\d,]+' "$LEAK_LOG" | tr -d ',' || echo "0")
+    POSSIBLY_LOST=$(grep -oP 'possibly lost: \K[\d,]+' "$LEAK_LOG" | tr -d ',' || echo "0")
+
+    echo -e "${BLUE}Memory Leak Analysis:${NC}"
+    echo "  Definitely lost: ${DEFINITELY_LOST} bytes"
+    echo "  Possibly lost: ${POSSIBLY_LOST} bytes"
+
+    if [ "$DEFINITELY_LOST" -eq 0 ]; then
+        echo -e "  Result: ${GREEN}✓ PASS (no definite leaks)${NC}"
+        LEAK_PASSED=true
+    else
+        echo -e "  Result: ${YELLOW}⚠ WARNING (${DEFINITELY_LOST} bytes definitely lost)${NC}"
+        LEAK_PASSED=false
+    fi
+else
+    echo -e "${YELLOW}WARNING: Leak log not found${NC}"
+    LEAK_PASSED=false
+fi
+
+echo ""
+
+# ==============================================================================
+# Summary
+# ==============================================================================
+
+echo -e "${BLUE}=== Memory Profiling Summary ===${NC}"
+echo ""
+echo "Results saved to: $RESULTS_DIR/"
+echo "  - $MASSIF_OUT"
+echo "  - $LEAK_LOG"
+echo ""
+
+echo "Profiling Results:"
+if [ "$MEMORY_PASSED" = true ]; then
+    echo -e "  ${GREEN}✓ Memory Peak <${MEMORY_THRESHOLD_MB}MB${NC}"
+else
+    echo -e "  ${RED}✗ Memory Peak exceeded${NC}"
+fi
+
+if [ "$LEAK_PASSED" = true ]; then
+    echo -e "  ${GREEN}✓ No Memory Leaks${NC}"
+else
+    echo -e "  ${YELLOW}⚠ Possible Memory Leaks${NC}"
+fi
+
+echo ""
+echo "View detailed results:"
+echo "  ms_print $MASSIF_OUT"
+echo "  cat $LEAK_LOG"
+echo ""
+
+# Exit code
+if [ "$MEMORY_PASSED" = true ] && [ "$LEAK_PASSED" = true ]; then
+    echo -e "${GREEN}=== MEMORY PROFILING PASSED ===${NC}"
+    exit 0
+else
+    echo -e "${RED}=== MEMORY PROFILING FAILED ===${NC}"
+    exit 1
+fi

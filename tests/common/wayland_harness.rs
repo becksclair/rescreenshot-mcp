@@ -2,122 +2,30 @@
 //!
 //! This module provides shared utilities for Wayland integration tests:
 //! - Backend setup/teardown
-//! - Timing measurement for performance tests
+//! - Timing measurement for performance tests (reexported from [`screenshot_mcp::perf`])
 //! - Environment validation
 //! - Assertion helpers
 
 #[cfg(feature = "linux-wayland")]
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(feature = "linux-wayland")]
 use screenshot_mcp::{
-    capture::{wayland_backend::WaylandBackend, CaptureFacade},
-    model::{CaptureOptions, SourceType},
+    capture::wayland_backend::WaylandBackend,
+    model::CaptureOptions,
     util::key_store::KeyStore,
 };
 
-/// Performance thresholds for M2 exit criteria
-pub struct PerformanceThresholds {
-    /// Prime consent flow (excluding user interaction): <5s
-    pub prime_consent_max:    Duration,
-    /// Headless capture latency P95: <2s
-    pub capture_latency_p95:  Duration,
-    /// Token rotation overhead: <100ms
-    pub token_rotation_max:   Duration,
-    /// Memory peak during capture: <200MB
-    pub memory_peak_max_bytes: usize,
-}
-
-impl Default for PerformanceThresholds {
-    fn default() -> Self {
-        Self {
-            prime_consent_max:     Duration::from_secs(5),
-            capture_latency_p95:   Duration::from_secs(2),
-            token_rotation_max:    Duration::from_millis(100),
-            memory_peak_max_bytes: 200 * 1024 * 1024, // 200MB
-        }
-    }
-}
-
-/// Test timing result
-#[derive(Debug, Clone)]
-pub struct TimingResult {
-    pub operation: String,
-    pub duration:  Duration,
-    pub success:   bool,
-}
-
-impl TimingResult {
-    pub fn duration_ms(&self) -> u128 {
-        self.duration.as_millis()
-    }
-
-    pub fn duration_secs(&self) -> f64 {
-        self.duration.as_secs_f64()
-    }
-}
-
-/// Creates a WaylandBackend instance for testing
-#[cfg(feature = "linux-wayland")]
-pub fn create_test_backend() -> WaylandBackend {
-    let key_store = Arc::new(KeyStore::new());
-    WaylandBackend::new(key_store)
-}
+// Re-export performance utilities from the main library
+// These are always available during testing since perf module has #[cfg(any(feature = "perf-tests", test))]
+#[cfg(any(feature = "perf-tests", test))]
+pub use screenshot_mcp::perf::{measure_operation, print_timing_result, PerformanceThresholds};
 
 /// Creates a WaylandBackend with a shared KeyStore for testing token operations
 #[cfg(feature = "linux-wayland")]
 pub fn create_test_backend_with_store(key_store: Arc<KeyStore>) -> WaylandBackend {
     WaylandBackend::new(key_store)
-}
-
-/// Measures the duration of an async operation
-#[cfg(feature = "linux-wayland")]
-pub async fn measure_operation<F, T, E>(
-    operation_name: &str,
-    operation: F,
-) -> Result<(T, TimingResult), E>
-where
-    F: std::future::Future<Output = Result<T, E>>,
-{
-    let start = Instant::now();
-    let result = operation.await;
-    let duration = start.elapsed();
-
-    let timing = TimingResult {
-        operation: operation_name.to_string(),
-        duration,
-        success: result.is_ok(),
-    };
-
-    result.map(|value| (value, timing))
-}
-
-/// Measures the duration of an operation and returns result with timing
-#[cfg(feature = "linux-wayland")]
-pub async fn time_async<F, T>(operation: F) -> (T, Duration)
-where
-    F: std::future::Future<Output = T>,
-{
-    let start = Instant::now();
-    let result = operation.await;
-    let duration = start.elapsed();
-    (result, duration)
-}
-
-/// Checks if Wayland environment is available for testing
-#[cfg(feature = "linux-wayland")]
-pub fn is_wayland_available() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
-}
-
-/// Checks if XDG Desktop Portal is likely available
-#[cfg(feature = "linux-wayland")]
-pub fn is_portal_available() -> bool {
-    // Basic check: DBUS_SESSION_BUS_ADDRESS should be set
-    std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok()
 }
 
 /// Prints test environment information
@@ -204,67 +112,18 @@ pub fn assert_token_exists(key_store: &KeyStore, source_id: &str) {
     );
 }
 
-/// Verifies token does not exist in KeyStore
-#[cfg(feature = "linux-wayland")]
-pub fn assert_token_not_exists(key_store: &KeyStore, source_id: &str) {
-    assert!(
-        !key_store.has_token(source_id).expect("Failed to check token"),
-        "Token '{}' should NOT exist in KeyStore",
-        source_id
-    );
-}
-
 /// Creates default capture options for testing
 #[cfg(feature = "linux-wayland")]
 pub fn default_test_capture_options() -> CaptureOptions {
     CaptureOptions::default()
 }
 
-/// Prints timing result in a formatted way
-pub fn print_timing_result(result: &TimingResult) {
-    let status = if result.success { "✓" } else { "✗" };
-    eprintln!(
-        "{} {} took {:.3}s ({:.0}ms)",
-        status,
-        result.operation,
-        result.duration_secs(),
-        result.duration_ms()
-    );
-}
-
-/// Prints multiple timing results as a table
-pub fn print_timing_summary(results: &[TimingResult]) {
-    eprintln!("\n=== Timing Summary ===");
-    for result in results {
-        print_timing_result(result);
-    }
-    eprintln!("======================\n");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_performance_thresholds_defaults() {
-        let thresholds = PerformanceThresholds::default();
-        assert_eq!(thresholds.prime_consent_max, Duration::from_secs(5));
-        assert_eq!(thresholds.capture_latency_p95, Duration::from_secs(2));
-        assert_eq!(thresholds.token_rotation_max, Duration::from_millis(100));
-        assert_eq!(thresholds.memory_peak_max_bytes, 200 * 1024 * 1024);
-    }
-
-    #[test]
-    fn test_timing_result_conversions() {
-        let result = TimingResult {
-            operation: "test".to_string(),
-            duration:  Duration::from_millis(1500),
-            success:   true,
-        };
-
-        assert_eq!(result.duration_ms(), 1500);
-        assert!((result.duration_secs() - 1.5).abs() < 0.001);
-    }
+    // Tests for PerformanceThresholds, TimingResult, and timing functions
+    // are now in src/perf/mod.rs
 
     #[test]
     fn test_assert_duration_below_success() {

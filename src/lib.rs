@@ -9,4 +9,6 @@ pub mod capture;
 pub mod error;
 pub mod mcp;
 pub mod model;
+#[cfg(any(feature = "perf-tests", test))]
+pub mod perf;
 pub mod util;
