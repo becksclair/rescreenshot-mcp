@@ -76,12 +76,18 @@ windows-backend = ["windows-sys", "windows-capture"]
 macos-backend = ["objc2-screen-capture-kit", "core-graphics"]
 # Image processing (M1)
 image-processing = ["image", "tempfile"]
-# Integration tests (gated)
+# Testing features (M2 Phase 9)
 integration-tests = []
+perf-tests = []
 
 [[bin]]
 name = "screenshot-mcp"
 path = "src/main.rs"
+
+[[bin]]
+name = "measure-capture"
+path = "tools/measure_capture.rs"
+required-features = ["perf-tests", "linux-wayland"]
 
 [profile.release]
 opt-level = 3

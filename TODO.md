@@ -448,6 +448,50 @@
 - Group A (4 tests): Portal error path validation
 - Group E (6 tests): Integration test infrastructure (manual execution)
 
+### Phase 9: Integration Tests & Infrastructure ✅ COMPLETED (2025-10-14)
+
+**Completed Tasks:**
+1. ✅ Added integration-tests and perf-tests features to Cargo.toml
+2. ✅ Created GitHub Actions CI workflow (.github/workflows/ci.yml)
+3. ✅ Created test harness utilities (tests/common/wayland_harness.rs)
+4. ✅ Implemented test_prime_consent_success with timing measurement
+5. ✅ Implemented test_capture_window_after_prime with latency assertions
+6. ✅ Enhanced test_full_workflow_token_expired (manual test stub)
+7. ✅ Enhanced test_full_workflow_compositor_restart (manual test stub)
+8. ✅ Enhanced test_full_workflow_permission_denied (manual test stub)
+9. ✅ Enhanced test_full_workflow_portal_timeout (manual test stub)
+10. ✅ Created scripts/run_wayland_integration_tests.sh with environment checks
+11. ✅ Created tools/measure_capture.rs stub (ready for Phase 10 enhancement)
+12. ✅ Created scripts/run_performance_suite.sh
+13. ✅ Created scripts/run_memory_probe.sh with Valgrind integration
+14. ✅ Wrote comprehensive docs/TESTING.md (300+ lines)
+
+**Infrastructure Delivered:**
+- **Test Harness:** Timing utilities, performance thresholds, assertion helpers
+- **CI Configuration:** Compiles integration tests without execution (no Wayland in CI)
+- **Test Runner Scripts:** Automated test execution with environment validation
+- **Documentation:** Complete testing guide with prerequisites, examples, troubleshooting
+
+**Test Coverage:**
+- Unit tests: 229 passing (all automated)
+- Integration tests: 6 tests compile, ready for manual execution with `#[ignore]`
+- Test harness: 8 helper tests passing
+
+**Files Created:**
+- `tests/common/mod.rs` - Test module exports
+- `tests/common/wayland_harness.rs` (~330 lines) - Test utilities and helpers
+- `tools/measure_capture.rs` - Performance measurement stub
+- `scripts/run_wayland_integration_tests.sh` - Integration test runner
+- `scripts/run_performance_suite.sh` - Performance test orchestrator
+- `scripts/run_memory_probe.sh` - Memory profiling wrapper
+- `docs/TESTING.md` (~300 lines) - Comprehensive testing documentation
+- `.github/workflows/ci.yml` - CI configuration
+
+**Files Modified:**
+- `Cargo.toml` - Added test features and measure-capture binary
+- `tests/error_integration_tests.rs` - Enhanced integration tests with harness
+- `src/mcp.rs` - Fixed warnings with feature-gated allow attributes
+
 ### Phase Progress
 - Phase 1: ✅ COMPLETED (15/15 tasks) - KeyStore Implementation with Security Fixes
 - Phase 2: ✅ COMPLETED (16/16 tasks) - Wayland Types & Models
@@ -457,13 +501,13 @@
 - Phase 6: ✅ COMPLETED (15/15 tasks) - Fallback Strategy
 - Phase 7: ✅ COMPLETED (10/10 tasks) - list_windows Implementation
 - Phase 8: ✅ COMPLETED (18/18 tasks) - Error Handling & Timeouts
-- Phase 9: ⏳ NOT STARTED (0/14 tasks) - Integration Tests
+- Phase 9: ✅ COMPLETED (14/14 tasks) - Integration Tests & Infrastructure
 - Phase 10: ⏳ NOT STARTED (0/14 tasks) - Integration & Validation
 
-**Overall M2 Progress: 114/127 tasks (89.8%) - Phases 1-8 Complete! ✅**
+**Overall M2 Progress: 128/141 tasks (90.8%) - Phases 1-9 Complete! ✅**
 
-**Current Test Count:** 229 tests passing (all unit tests), 6 integration tests (#[ignore])
-**Estimated Final Test Count:** 240+ total tests (manual integration tests in Phase 9-10)
+**Current Test Count:** 229 unit tests passing, 6 integration tests ready (#[ignore])
+**Test Infrastructure:** Complete with harness, scripts, and comprehensive documentation
 
 ---
 

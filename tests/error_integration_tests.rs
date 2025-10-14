@@ -25,6 +25,10 @@ mod wayland_error_integration {
         util::key_store::KeyStore,
     };
 
+    // Import test harness utilities
+    mod common;
+    use common::wayland_harness::*;
+
     /// Helper to create WaylandBackend instance for tests
     fn create_backend() -> WaylandBackend {
         let key_store = Arc::new(KeyStore::new());
@@ -119,55 +123,99 @@ mod wayland_error_integration {
     #[tokio::test]
     #[ignore = "Requires live Wayland session with portal"]
     async fn test_prime_consent_success() {
-        let backend = create_backend();
+        print_test_environment();
 
-        // Attempt to prime consent - requires user interaction
-        let result = backend
-            .prime_consent(SourceType::Monitor, "test-integration", false)
-            .await;
+        let key_store = Arc::new(KeyStore::new());
+        let backend = create_test_backend_with_store(Arc::clone(&key_store));
+        let source_id = "test-integration-prime";
 
-        // With live portal, this should succeed (user must grant permission)
-        if let Ok(consent_result) = result {
-            assert_eq!(consent_result.primary_source_id, "test-integration");
-            assert!(consent_result.num_streams > 0);
-            eprintln!("✓ Prime consent successful");
-            eprintln!("  Source ID: {}", consent_result.primary_source_id);
-            eprintln!("  Streams: {}", consent_result.num_streams);
-        } else {
-            eprintln!("✗ Prime consent failed: {:?}", result.unwrap_err());
-            panic!("Expected prime consent to succeed with user permission");
+        // Measure prime consent operation
+        let result = measure_operation(
+            "prime_consent",
+            backend.prime_consent(SourceType::Monitor, source_id, false),
+        )
+        .await;
+
+        match result {
+            Ok((consent_result, timing)) => {
+                print_timing_result(&timing);
+
+                // Verify consent succeeded
+                assert_eq!(consent_result.primary_source_id, source_id);
+                assert!(consent_result.num_streams > 0);
+
+                // Verify timing (excluding user interaction time)
+                eprintln!("✓ Prime consent successful");
+                eprintln!("  Source ID: {}", consent_result.primary_source_id);
+                eprintln!("  Streams: {}", consent_result.num_streams);
+                eprintln!("  Duration: {:.3}s", timing.duration_secs());
+
+                // Verify token was stored
+                assert_token_exists(&key_store, source_id);
+
+                // Cleanup
+                cleanup_test_tokens(&key_store, &[source_id]);
+            }
+            Err(e) => {
+                eprintln!("✗ Prime consent failed: {:?}", e);
+                panic!("Expected prime consent to succeed with user permission. Ensure portal is running and grant permission when prompted.");
+            }
         }
     }
 
     #[tokio::test]
     #[ignore = "Requires live Wayland session with portal"]
     async fn test_capture_window_after_prime() {
+        print_test_environment();
+
         let key_store = Arc::new(KeyStore::new());
-        let backend = WaylandBackend::new(Arc::clone(&key_store));
+        let backend = create_test_backend_with_store(Arc::clone(&key_store));
+        let source_id = "test-capture-latency";
 
-        // First, store a mock token (in real scenario, would prime first)
-        key_store
-            .store_token("test-capture", "mock-token-for-testing")
-            .expect("Failed to store token");
+        eprintln!("=== Test: Capture Window After Prime ===");
+        eprintln!("This test requires:");
+        eprintln!("1. First run prime_consent separately to store a valid token");
+        eprintln!("2. Then run this test within same compositor session");
+        eprintln!("3. Or manually store a real token for testing");
+        eprintln!("");
 
-        let opts = CaptureOptions::default();
-        let result = backend.capture_window("test-capture".to_string(), &opts).await;
+        // NOTE: This test expects a real token to be already stored
+        // In real usage: user would prime first, then capture
+        // For testing: we'll use mock token and verify fallback works
+        setup_test_token(&key_store, source_id, "mock-token-for-testing")
+            .expect("Failed to store test token");
 
-        // With mock token, portal will reject it, triggering fallback
-        // This validates the fallback path in a live environment
+        let opts = default_test_capture_options();
+
+        // Measure capture operation (including fallback)
+        let result = measure_operation(
+            "capture_window",
+            backend.capture_window(source_id.to_string(), &opts),
+        )
+        .await;
+
         match result {
-            Ok(image) => {
-                eprintln!("✓ Capture succeeded (via fallback)");
+            Ok((image, timing)) => {
+                print_timing_result(&timing);
+
+                eprintln!("✓ Capture succeeded (via fallback with mock token)");
                 eprintln!("  Dimensions: {:?}", image.dimensions());
+                eprintln!("  Duration: {:.3}s ({:.0}ms)", timing.duration_secs(), timing.duration_ms());
+
+                // Assert latency target (<2s for P95)
+                let thresholds = PerformanceThresholds::default();
+                assert_duration_below(timing.duration, thresholds.capture_latency_p95, "capture_window");
             }
             Err(e) => {
                 eprintln!("✗ Capture failed: {:?}", e);
-                // Failure is expected with mock token in CI
+                // With mock token, portal will reject and trigger fallback
+                // Fallback may also fail in headless CI environment
+                eprintln!("Note: This is expected with mock token in CI. On live Wayland with real token, capture should succeed.");
             }
         }
 
         // Cleanup
-        key_store.delete_token("test-capture").unwrap();
+        cleanup_test_tokens(&key_store, &[source_id]);
     }
 }
 

@@ -69,6 +69,7 @@ fn default_source_id() -> String {
 }
 
 /// Parses a source type string to SourceType enum
+#[cfg_attr(not(feature = "linux-wayland"), allow(dead_code))]
 fn parse_source_type(source_type_str: &str) -> Result<SourceType, String> {
     match source_type_str.to_lowercase().as_str() {
         "monitor" => Ok(SourceType::Monitor),
@@ -383,6 +384,7 @@ impl ScreenshotMcpServer {
     ///   }]
     /// }
     /// ```
+    #[cfg_attr(not(feature = "linux-wayland"), allow(unused_variables))]
     pub async fn prime_wayland_consent(
         &self,
         params: PrimeWaylandConsentParams,
