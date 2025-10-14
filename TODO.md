@@ -776,20 +776,51 @@
 - test_resolve_target_no_windows: Error handling
 - test_resolve_target_invalid_regex_fallback: Graceful degradation
 
+### Phase 6: capture_window with xcap Integration ✅ COMPLETED (2025-10-14)
+
+**Completed Tasks:**
+1. ✅ Integrated xcap::Window::all() for window enumeration
+2. ✅ Implemented window ID matching (xcap Window::id() returns Result<u32>)
+3. ✅ Added spawn_blocking wrapper for xcap capture (avoids blocking async runtime)
+4. ✅ Implemented error mapping (WindowNotFound, BackendNotAvailable)
+5. ✅ Added 2s timeout for capture operations (CAPTURE_WINDOW_TIMEOUT_MS)
+6. ✅ Implemented ImageBuffer transformation pipeline (crop → scale)
+7. ✅ Fixed API compatibility (Window::id() returns Result, Window::title() returns Result)
+8. ✅ Fixed Region parameter passing (by-copy with deref)
+9. ✅ Fixed scale parameter handling (f32, not Option<f32>)
+10. ✅ Added feature-gated implementation for linux-x11
+11. ✅ All 211 library tests passing
+12. ✅ Zero warnings
+13. ✅ Code formatted with rustfmt
+
+**Implementation Highlights:**
+- **xcap Integration:** Uses Window::all() + filter by ID (xcap 0.7 doesn't have from_raw_id)
+- **Async Safety:** spawn_blocking prevents blocking tokio runtime on synchronous xcap calls
+- **Transformation Pipeline:** Crop first (if region specified), then scale (if != 1.0)
+- **Error Handling:** Maps xcap errors to CaptureError::{WindowNotFound, BackendNotAvailable}
+- **Timeout Protection:** 2s timeout on entire capture operation (matches M3 spec)
+
+**Files Modified:**
+- `src/capture/x11_backend.rs` - Added capture_window() implementation (~110 lines)
+
+**Test Coverage:**
+- Compilation verified with --lib --features linux-x11
+- Existing tests continue to pass (211/211)
+
 ### Phase Progress
 - Phase 1: ✅ COMPLETED (13/13 tasks) - Module Skeleton
 - Phase 2: ✅ COMPLETED (10/10 tasks) - Connection Management
 - Phase 3: ✅ COMPLETED (13/13 tasks) - Property Query Helpers
 - Phase 4: ✅ COMPLETED (13/13 tasks) - list_windows Implementation
 - Phase 5: ✅ COMPLETED (16/16 tasks) - resolve_target with Regex/Fuzzy Matching
-- Phase 6: ⏳ PENDING - capture_window with xcap Integration
+- Phase 6: ✅ COMPLETED (13/13 tasks) - capture_window with xcap Integration
 - Phase 7: ⏳ PENDING - capture_display Stub
 - Phase 8: ⏳ PENDING - Error Mapping & Remediation
 - Phase 9: ⏳ PENDING - Unit Tests (80+) & Integration Tests (6, #[ignore])
 - Phase 10: ⏳ PENDING - Performance Validation & Documentation
 
-**Current M3 Progress: 65/138 tasks (47%) estimated**
+**Current M3 Progress: 78/138 tasks (57%) estimated**
 
 **Next Steps:**
-- Phase 6: Implement capture_window() with xcap integration
-- Target: <2s latency for window capture
+- Phase 7: Stub capture_display() for completeness
+- Phase 8: Error mapping & remediation hints

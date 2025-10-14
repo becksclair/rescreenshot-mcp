@@ -1147,13 +1147,129 @@ impl CaptureFacade for X11Backend {
     /// - [`CaptureError::WindowNotFound`] - Window no longer exists
     /// - [`CaptureError::BackendNotAvailable`] - xcap capture failed
     /// - [`CaptureError::CaptureTimeout`] - Operation exceeded 2s
+    #[cfg(feature = "linux-x11")]
     async fn capture_window(
         &self,
         handle: WindowHandle,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        tracing::info!("X11 capture_window called (stub): handle={}, opts={:?}", handle, opts);
-        // TODO: Implement in Phase 6
+        tracing::info!("Capturing X11 window: handle={}", handle);
+
+        // Parse window handle as u32 X11 Window ID
+        let win_id = handle.parse::<u32>().map_err(|e| {
+            tracing::error!("Invalid window handle '{}': {}", handle, e);
+            CaptureError::InvalidParameter {
+                parameter: "window_handle".to_string(),
+                reason:    format!("Expected numeric X11 window ID, got '{}'", handle),
+            }
+        })?;
+
+        // Wrap xcap capture in spawn_blocking to avoid blocking async runtime
+        // xcap uses synchronous X11 calls that can block
+        let capture_future = tokio::task::spawn_blocking(move || {
+            tracing::debug!("Enumerating xcap windows to find ID: {}", win_id);
+
+            // xcap doesn't have a from_raw_id() method, so we enumerate all windows
+            // and find the one with matching ID
+            let windows = xcap::Window::all().map_err(|e| {
+                tracing::error!("Failed to enumerate xcap windows: {}", e);
+                CaptureError::BackendNotAvailable {
+                    backend: BackendType::X11,
+                }
+            })?;
+
+            tracing::debug!("Found {} xcap windows, searching for ID {}", windows.len(), win_id);
+
+            // Find window by ID (xcap's Window::id() returns Result<u32>)
+            let window = windows
+                .into_iter()
+                .find(|w| w.id().ok() == Some(win_id))
+                .ok_or_else(|| {
+                    tracing::error!("Window {} not found in xcap enumeration", win_id);
+                    CaptureError::WindowNotFound {
+                        selector: crate::model::WindowSelector {
+                            title_substring_or_regex: Some(format!("window_id:{}", win_id)),
+                            class: None,
+                            exe: None,
+                        },
+                    }
+                })?;
+
+            tracing::debug!(
+                "Found matching xcap window: {} ('{}')",
+                win_id,
+                window.title().unwrap_or_else(|_| "Unknown".to_string())
+            );
+
+            // Capture the window image
+            let image = window.capture_image().map_err(|e| {
+                tracing::error!("xcap capture failed for window {}: {}", win_id, e);
+
+                // Map capture errors
+                let err_str = e.to_string().to_lowercase();
+                if err_str.contains("not found") || err_str.contains("destroyed") {
+                    CaptureError::WindowNotFound {
+                        selector: crate::model::WindowSelector {
+                            title_substring_or_regex: Some(format!("window_id:{}", win_id)),
+                            class: None,
+                            exe: None,
+                        },
+                    }
+                } else {
+                    CaptureError::BackendNotAvailable {
+                        backend: BackendType::X11,
+                    }
+                }
+            })?;
+
+            tracing::info!(
+                "Successfully captured window {} ({}x{})",
+                win_id,
+                image.width(),
+                image.height()
+            );
+
+            Ok::<_, CaptureError>(image)
+        });
+
+        // Wait for capture with timeout
+        let image = Self::with_timeout(
+            async {
+                capture_future.await.map_err(|e| {
+                    tracing::error!("Capture task panicked: {}", e);
+                    CaptureError::BackendNotAvailable {
+                        backend: BackendType::X11,
+                    }
+                })?
+            },
+            CAPTURE_WINDOW_TIMEOUT_MS,
+        )
+        .await?;
+
+        // Convert RgbaImage to ImageBuffer and apply transformations
+        let mut buffer = ImageBuffer::new(image::DynamicImage::ImageRgba8(image));
+
+        // Apply transformations (crop, scale, format)
+        if let Some(region) = &opts.region {
+            tracing::debug!("Applying crop: {:?}", region);
+            buffer = buffer.crop(*region)?;
+        }
+
+        // scale is f32, not Option<f32>
+        if opts.scale != 1.0 {
+            tracing::debug!("Applying scale: {}", opts.scale);
+            buffer = buffer.scale(opts.scale)?;
+        }
+
+        Ok(buffer)
+    }
+
+    #[cfg(not(feature = "linux-x11"))]
+    async fn capture_window(
+        &self,
+        _handle: WindowHandle,
+        _opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
         Err(CaptureError::BackendNotAvailable {
             backend: BackendType::X11,
         })
