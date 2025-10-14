@@ -2,7 +2,8 @@
 //!
 //! This module provides shared utilities for Wayland integration tests:
 //! - Backend setup/teardown
-//! - Timing measurement for performance tests (reexported from [`screenshot_mcp::perf`])
+//! - Timing measurement for performance tests (reexported from
+//!   [`screenshot_mcp::perf`])
 //! - Environment validation
 //! - Assertion helpers
 
@@ -10,17 +11,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "linux-wayland")]
-use screenshot_mcp::{
-    capture::wayland_backend::WaylandBackend,
-    model::CaptureOptions,
-    util::key_store::KeyStore,
-};
-
 // Re-export performance utilities from the main library
-// These are always available during testing since perf module has #[cfg(any(feature = "perf-tests", test))]
+// These are always available during testing since perf module has #[cfg(any(feature =
+// "perf-tests", test))]
 #[cfg(any(feature = "perf-tests", test))]
 pub use screenshot_mcp::perf::{measure_operation, print_timing_result, PerformanceThresholds};
+#[cfg(feature = "linux-wayland")]
+use screenshot_mcp::{
+    capture::wayland_backend::WaylandBackend, model::CaptureOptions, util::key_store::KeyStore,
+};
 
 /// Creates a WaylandBackend with a shared KeyStore for testing token operations
 #[cfg(feature = "linux-wayland")]
@@ -52,11 +51,7 @@ pub fn print_test_environment() {
 }
 
 /// Asserts that a duration is below a threshold
-pub fn assert_duration_below(
-    actual: Duration,
-    threshold: Duration,
-    operation: &str,
-) {
+pub fn assert_duration_below(actual: Duration, threshold: Duration, operation: &str) {
     assert!(
         actual <= threshold,
         "{} took {:.3}s, expected <={:.3}s ({}ms over threshold)",
@@ -68,11 +63,7 @@ pub fn assert_duration_below(
 }
 
 /// Asserts that a duration is above a minimum (for sanity checks)
-pub fn assert_duration_above(
-    actual: Duration,
-    minimum: Duration,
-    operation: &str,
-) {
+pub fn assert_duration_above(actual: Duration, minimum: Duration, operation: &str) {
     assert!(
         actual >= minimum,
         "{} took {:.3}s, expected >={:.3}s (suspiciously fast)",
@@ -106,7 +97,9 @@ pub fn setup_test_token(
 #[cfg(feature = "linux-wayland")]
 pub fn assert_token_exists(key_store: &KeyStore, source_id: &str) {
     assert!(
-        key_store.has_token(source_id).expect("Failed to check token"),
+        key_store
+            .has_token(source_id)
+            .expect("Failed to check token"),
         "Token '{}' should exist in KeyStore",
         source_id
     );
@@ -127,11 +120,7 @@ mod tests {
 
     #[test]
     fn test_assert_duration_below_success() {
-        assert_duration_below(
-            Duration::from_millis(900),
-            Duration::from_secs(1),
-            "test operation",
-        );
+        assert_duration_below(Duration::from_millis(900), Duration::from_secs(1), "test operation");
     }
 
     #[test]
@@ -156,10 +145,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "suspiciously fast")]
     fn test_assert_duration_above_failure() {
-        assert_duration_above(
-            Duration::from_millis(900),
-            Duration::from_secs(1),
-            "test operation",
-        );
+        assert_duration_above(Duration::from_millis(900), Duration::from_secs(1), "test operation");
     }
 }

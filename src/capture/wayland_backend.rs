@@ -112,14 +112,15 @@ impl WaylandBackend {
     ///
     /// Portal operations include user interaction (permission dialogs), DBus
     /// communication with xdg-desktop-portal, and compositor-specific delays.
-    /// 30 seconds accommodates typical user response times plus system overhead.
+    /// 30 seconds accommodates typical user response times plus system
+    /// overhead.
     const DEFAULT_PORTAL_TIMEOUT_SECS: u64 = 30;
 
     /// Timeout for PipeWire frame capture (5 seconds)
     ///
     /// Frame capture should be immediate once the PipeWire stream is connected.
-    /// 5 seconds accounts for stream initialization and the first frame arrival,
-    /// with buffer for system load spikes.
+    /// 5 seconds accounts for stream initialization and the first frame
+    /// arrival, with buffer for system load spikes.
     const PIPEWIRE_FRAME_TIMEOUT_SECS: u64 = 5;
 
     /// Creates a new WaylandBackend instance
@@ -420,7 +421,8 @@ impl WaylandBackend {
     /// # Returns
     ///
     /// - `Ok(Screencast)` on successful connection (production only)
-    /// - `Err(PortalUnavailable)` if portal service is not running or in test mode
+    /// - `Err(PortalUnavailable)` if portal service is not running or in test
+    ///   mode
     ///
     /// # Errors
     ///
@@ -1456,7 +1458,9 @@ mod tests {
 
         let result = WaylandBackend::with_timeout(slow_operation, 1).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CaptureError::CaptureTimeout { duration_ms: 1000 }));
+        assert!(matches!(result.unwrap_err(), CaptureError::CaptureTimeout {
+            duration_ms: 1000,
+        }));
     }
 
     #[tokio::test]
@@ -1496,7 +1500,9 @@ mod tests {
         };
 
         // Capture without token should trigger fallback
-        let result = backend.capture_window("no-token-handle".to_string(), &opts).await;
+        let result = backend
+            .capture_window("no-token-handle".to_string(), &opts)
+            .await;
 
         // In CI environment, portal will timeout/unavailable
         // But the key point is fallback was attempted with region preserved
@@ -1558,7 +1564,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = backend.capture_window("test-window".to_string(), &opts).await;
+        let result = backend
+            .capture_window("test-window".to_string(), &opts)
+            .await;
 
         // Portal unavailable in CI, but logic path is correct
         assert!(result.is_err());
@@ -1585,9 +1593,9 @@ mod tests {
             .prime_consent(SourceType::Monitor, "timeout-test", false)
             .await;
 
-        // On systems WITH portal: May succeed (user grants) or timeout (user doesn't respond)
-        // On systems WITHOUT portal: Should get PortalUnavailable or timeout
-        // Either outcome validates the error path exists
+        // On systems WITH portal: May succeed (user grants) or timeout (user doesn't
+        // respond) On systems WITHOUT portal: Should get PortalUnavailable or
+        // timeout Either outcome validates the error path exists
         match result {
             Ok(_) => {
                 // Portal available and user granted permission (or it succeeded)
@@ -1668,7 +1676,9 @@ mod tests {
         key_store.store_token("rotation-test", "old-token").unwrap();
 
         let opts = CaptureOptions::default();
-        let result = backend.capture_window("rotation-test".to_string(), &opts).await;
+        let result = backend
+            .capture_window("rotation-test".to_string(), &opts)
+            .await;
 
         // Will fail in CI (no portal), but token should still exist
         assert!(result.is_err());

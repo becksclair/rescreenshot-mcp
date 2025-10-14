@@ -22,10 +22,15 @@ pub mod mock;
 #[cfg(feature = "linux-wayland")]
 pub mod wayland_backend;
 
+#[cfg(feature = "linux-x11")]
+pub mod x11_backend;
+
 pub use image_buffer::ImageBuffer;
 pub use mock::MockBackend;
 #[cfg(feature = "linux-wayland")]
 pub use wayland_backend::{PrimeConsentResult, WaylandBackend};
+#[cfg(feature = "linux-x11")]
+pub use x11_backend::X11Backend;
 
 /// Core trait for screenshot capture backends
 ///

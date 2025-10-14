@@ -22,9 +22,7 @@ mod common;
 mod wayland_error_integration {
     use std::sync::Arc;
 
-    use screenshot_mcp::{
-        capture::CaptureFacade, model::SourceType, util::key_store::KeyStore,
-    };
+    use screenshot_mcp::{capture::CaptureFacade, model::SourceType, util::key_store::KeyStore};
 
     // Import test harness utilities
     use crate::common::wayland_harness::*;
@@ -152,7 +150,10 @@ mod wayland_error_integration {
             }
             Err(e) => {
                 eprintln!("✗ Prime consent failed: {:?}", e);
-                panic!("Expected prime consent to succeed with user permission. Ensure portal is running and grant permission when prompted.");
+                panic!(
+                    "Expected prime consent to succeed with user permission. Ensure portal is \
+                     running and grant permission when prompted."
+                );
             }
         }
     }
@@ -193,17 +194,28 @@ mod wayland_error_integration {
 
                 eprintln!("✓ Capture succeeded (via fallback with mock token)");
                 eprintln!("  Dimensions: {:?}", image.dimensions());
-                eprintln!("  Duration: {:.3}s ({:.0}ms)", timing.duration_secs(), timing.duration_ms());
+                eprintln!(
+                    "  Duration: {:.3}s ({:.0}ms)",
+                    timing.duration_secs(),
+                    timing.duration_ms()
+                );
 
                 // Assert latency target (<2s for P95)
                 let thresholds = PerformanceThresholds::default();
-                assert_duration_below(timing.duration, thresholds.capture_latency_p95, "capture_window");
+                assert_duration_below(
+                    timing.duration,
+                    thresholds.capture_latency_p95,
+                    "capture_window",
+                );
             }
             Err(e) => {
                 eprintln!("✗ Capture failed: {:?}", e);
                 // With mock token, portal will reject and trigger fallback
                 // Fallback may also fail in headless CI environment
-                eprintln!("Note: This is expected with mock token in CI. On live Wayland with real token, capture should succeed.");
+                eprintln!(
+                    "Note: This is expected with mock token in CI. On live Wayland with real \
+                     token, capture should succeed."
+                );
             }
         }
 

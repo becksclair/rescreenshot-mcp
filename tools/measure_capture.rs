@@ -7,9 +7,12 @@
 //!
 //! ## Commands
 //!
-//! - `prime-consent <source_id>`: Measures portal interaction time (excluding user)
-//! - `headless-batch --captures N <source_id>`: Runs N captures, outputs P95 latency
-//! - `token-rotation --captures N <source_id>`: Measures token rotation overhead
+//! - `prime-consent <source_id>`: Measures portal interaction time (excluding
+//!   user)
+//! - `headless-batch --captures N <source_id>`: Runs N captures, outputs P95
+//!   latency
+//! - `token-rotation --captures N <source_id>`: Measures token rotation
+//!   overhead
 //! - `summary`: Aggregates metrics and validates against thresholds
 //!
 //! ## Usage
@@ -34,50 +37,50 @@ use screenshot_mcp::{
 
 #[derive(Debug, serde::Serialize)]
 struct MeasurementOutput {
-    operation: String,
-    duration_ms: u128,
+    operation:     String,
+    duration_ms:   u128,
     duration_secs: f64,
-    success: bool,
+    success:       bool,
     threshold_met: Option<bool>,
 }
 
 #[derive(Debug, serde::Serialize)]
 struct BatchOutput {
-    operation: String,
+    operation:      String,
     total_captures: usize,
-    successful: usize,
-    failed: usize,
-    min_ms: u128,
-    max_ms: u128,
-    mean_ms: f64,
-    p50_ms: u128,
-    p95_ms: u128,
-    p99_ms: u128,
-    threshold_met: Option<bool>,
+    successful:     usize,
+    failed:         usize,
+    min_ms:         u128,
+    max_ms:         u128,
+    mean_ms:        f64,
+    p50_ms:         u128,
+    p95_ms:         u128,
+    p99_ms:         u128,
+    threshold_met:  Option<bool>,
 }
 
 #[derive(Debug, serde::Serialize)]
 struct SummaryOutput {
-    status: String,
+    status:     String,
     thresholds: ThresholdsReport,
-    message: String,
+    message:    String,
 }
 
 #[derive(Debug, serde::Serialize)]
 struct ThresholdsReport {
-    prime_consent_max_s: f64,
+    prime_consent_max_s:   f64,
     capture_latency_p95_s: f64,
     token_rotation_max_ms: u128,
-    memory_peak_max_mb: usize,
+    memory_peak_max_mb:    usize,
 }
 
 impl From<&PerformanceThresholds> for ThresholdsReport {
     fn from(thresholds: &PerformanceThresholds) -> Self {
         Self {
-            prime_consent_max_s: thresholds.prime_consent_max.as_secs_f64(),
+            prime_consent_max_s:   thresholds.prime_consent_max.as_secs_f64(),
             capture_latency_p95_s: thresholds.capture_latency_p95.as_secs_f64(),
             token_rotation_max_ms: thresholds.token_rotation_max.as_millis(),
-            memory_peak_max_mb: thresholds.memory_peak_max_bytes / (1024 * 1024),
+            memory_peak_max_mb:    thresholds.memory_peak_max_bytes / (1024 * 1024),
         }
     }
 }
@@ -206,10 +209,10 @@ async fn run_prime_consent(source_id: &str) {
             let threshold_met = thresholds.check_prime_consent(timing.duration);
 
             let output = MeasurementOutput {
-                operation: "prime_consent".to_string(),
-                duration_ms: timing.duration_ms(),
+                operation:     "prime_consent".to_string(),
+                duration_ms:   timing.duration_ms(),
                 duration_secs: timing.duration_secs(),
-                success: true,
+                success:       true,
                 threshold_met: Some(threshold_met),
             };
 
@@ -219,11 +222,7 @@ async fn run_prime_consent(source_id: &str) {
             eprintln!("✓ Prime consent successful");
             eprintln!("  Source ID: {}", consent_result.primary_source_id);
             eprintln!("  Streams: {}", consent_result.num_streams);
-            eprintln!(
-                "  Duration: {:.3}s ({:.0}ms)",
-                timing.duration_secs(),
-                timing.duration_ms()
-            );
+            eprintln!("  Duration: {:.3}s ({:.0}ms)", timing.duration_secs(), timing.duration_ms());
             eprintln!(
                 "  Threshold: <{:.1}s - {}",
                 thresholds.prime_consent_max.as_secs_f64(),
@@ -236,10 +235,10 @@ async fn run_prime_consent(source_id: &str) {
         }
         Err(e) => {
             let output = MeasurementOutput {
-                operation: "prime_consent".to_string(),
-                duration_ms: 0,
+                operation:     "prime_consent".to_string(),
+                duration_ms:   0,
                 duration_secs: 0.0,
-                success: false,
+                success:       false,
                 threshold_met: None,
             };
 
@@ -455,9 +454,9 @@ fn run_summary() {
     let thresholds = PerformanceThresholds::default();
 
     let summary = SummaryOutput {
-        status: "ready".to_string(),
+        status:     "ready".to_string(),
         thresholds: ThresholdsReport::from(&thresholds),
-        message: "Run individual measurement commands to validate performance".to_string(),
+        message:    "Run individual measurement commands to validate performance".to_string(),
     };
 
     println!("{}", serde_json::to_string_pretty(&summary).unwrap());
@@ -467,10 +466,7 @@ fn run_summary() {
     eprintln!("  Prime consent: <{:.1}s", thresholds.prime_consent_max.as_secs_f64());
     eprintln!("  Capture latency (P95): <{:.1}s", thresholds.capture_latency_p95.as_secs_f64());
     eprintln!("  Token rotation: <{:.0}ms", thresholds.token_rotation_max.as_millis());
-    eprintln!(
-        "  Memory peak: <{}MB",
-        thresholds.memory_peak_max_bytes / (1024 * 1024)
-    );
+    eprintln!("  Memory peak: <{}MB", thresholds.memory_peak_max_bytes / (1024 * 1024));
     eprintln!();
     eprintln!("Run performance measurements:");
     eprintln!("  1. measure-capture prime-consent <source_id>");

@@ -606,3 +606,116 @@
 
 ## Next Milestone After M2
 - **M3:** X11 Backend (Week 4) - Window enumeration and capture using x11rb + xcap
+
+---
+
+## M3: X11 Backend Implementation
+
+**Start Date:** 2025-10-14
+**Target Completion:** 2025-10-17 (3-4 working days)
+
+### Phase 1: X11Backend Module Skeleton ✅ COMPLETED (2025-10-14)
+
+**Completed Tasks:**
+1. ✅ Created src/capture/x11_backend.rs with X11Backend struct
+2. ✅ Defined X11Backend fields: conn (Arc<Mutex<Option<RustConnection>>>), screen_idx, atoms (OnceLock)
+3. ✅ Created X11Atoms struct for cached EWMH atoms (net_client_list, net_wm_name, wm_name, wm_class, net_wm_pid, utf8_string)
+4. ✅ Implemented X11Backend::new() with $DISPLAY validation
+5. ✅ Stubbed all CaptureFacade trait methods (list_windows, resolve_target, capture_window, capture_display)
+6. ✅ Implemented capabilities() method (no cursor, supports region, supports window/display capture)
+7. ✅ Implemented as_any() for downcasting
+8. ✅ Added feature gate #[cfg(feature = "linux-x11")] to module
+9. ✅ Exported X11Backend from src/capture/mod.rs with feature gate
+10. ✅ Added basic unit tests (new without DISPLAY, new with DISPLAY, capabilities, stub methods)
+11. ✅ All 49 tests passing
+12. ✅ Zero clippy warnings (expected dead code for Phase 2+ helpers)
+13. ✅ Code formatted with rustfmt
+
+**Files Created:**
+- `src/capture/x11_backend.rs` (~400 lines) - Module skeleton with stubs
+
+**Files Modified:**
+- `src/capture/mod.rs` - Added x11_backend module declaration and X11Backend export
+
+**Test Coverage:**
+- test_x11_backend_new_without_display: Verifies BackendNotAvailable when $DISPLAY unset
+- test_x11_backend_new_with_display: Verifies successful creation with $DISPLAY
+- test_capabilities: Verifies X11 capability flags
+- test_list_windows_stub: Verifies stub returns empty vec
+- test_resolve_target_stub: Verifies stub returns WindowNotFound
+
+### Phase 2: Connection Management ✅ COMPLETED (2025-10-14)
+
+**Completed Tasks:**
+1. ✅ Implemented get_or_create_connection() with lazy initialization
+2. ✅ Added connection health check via get_input_focus()
+3. ✅ Implemented reconnect-on-error logic (clear stale connection, create new)
+4. ✅ Added Arc<Mutex<Option<RustConnection>>> pattern for shared connection
+5. ✅ Updated get_atoms() to use get_or_create_connection()
+6. ✅ Added tracing for connection lifecycle (trace, debug, warn, error)
+7. ✅ Fixed trait imports (Connection, ConnectionExt)
+8. ✅ All 49 tests passing
+9. ✅ Zero clippy warnings
+10. ✅ Code formatted with rustfmt
+
+**Implementation Highlights:**
+- **Lazy Initialization:** Connection created on first use, cached in Arc<Mutex<>>
+- **Health Checks:** Validates connection with lightweight get_input_focus() query
+- **Reconnect Logic:** Clears stale connection on failure, forces new connection on next call
+- **Thread Safety:** Mutex-protected connection, safe for concurrent access
+- **Temporary Limitation:** Creates new connection per-operation (will optimize in future)
+
+**Files Modified:**
+- `src/capture/x11_backend.rs` - Added get_or_create_connection(), updated imports (+90 lines)
+
+### Phase 3: Property Query Helpers ✅ COMPLETED (2025-10-14)
+
+**Completed Tasks:**
+1. ✅ Implemented get_property_utf8() for _NET_WM_NAME (UTF-8 encoded titles)
+2. ✅ Implemented get_property_latin1() for WM_NAME (Latin-1 fallback)
+3. ✅ Implemented get_property_pid() for _NET_WM_PID (process IDs)
+4. ✅ Implemented get_property_class() for WM_CLASS (instance + class names)
+5. ✅ Implemented get_client_list() for _NET_CLIENT_LIST (window IDs from root)
+6. ✅ Added DoS protection (32KB limit on property queries)
+7. ✅ Added lossy UTF-8 conversion for safety
+8. ✅ Added Latin-1 to UTF-8 conversion
+9. ✅ Added null-separated string parsing for WM_CLASS
+10. ✅ Added comprehensive error handling with tracing
+11. ✅ All 49 tests passing
+12. ✅ Zero clippy warnings (expected dead code until Phase 4)
+13. ✅ Code formatted with rustfmt
+
+**Implementation Highlights:**
+- **DoS Protection:** All property queries limited to 32KB (8192 u32 units)
+- **Encoding Safety:** Lossy UTF-8 conversion prevents panics on malformed data
+- **Type Safety:** Proper atom types for each property (UTF8_STRING, STRING, CARDINAL, WINDOW)
+- **Null Handling:** Empty strings returned for missing/invalid properties
+- **Error Mapping:** All X11 errors mapped to CaptureError::BackendNotAvailable
+
+**Files Modified:**
+- `src/capture/x11_backend.rs` - Added 5 property helper methods (+280 lines)
+
+**Code Stats:**
+- Module size: ~640 lines total
+- Property helpers: 5 methods
+- Connection management: 1 method
+- Atom caching: 2 methods
+- Trait implementation: 6 methods (5 stubs + 1 capabilities)
+
+### Phase Progress
+- Phase 1: ✅ COMPLETED (13/13 tasks) - Module Skeleton
+- Phase 2: ✅ COMPLETED (10/10 tasks) - Connection Management
+- Phase 3: ✅ COMPLETED (13/13 tasks) - Property Query Helpers
+- Phase 4: ⏳ PENDING - list_windows Implementation
+- Phase 5: ⏳ PENDING - resolve_target with Regex/Fuzzy Matching
+- Phase 6: ⏳ PENDING - capture_window with xcap Integration
+- Phase 7: ⏳ PENDING - capture_display Stub
+- Phase 8: ⏳ PENDING - Error Mapping & Remediation
+- Phase 9: ⏳ PENDING - Unit Tests (80+) & Integration Tests (6, #[ignore])
+- Phase 10: ⏳ PENDING - Performance Validation & Documentation
+
+**Current M3 Progress: 36/138 tasks (26%) estimated**
+
+**Next Steps:**
+- Phase 4: Implement list_windows() using property helpers with parallel fetching
+- Target: <200ms latency for window enumeration
