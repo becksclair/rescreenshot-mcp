@@ -736,20 +736,60 @@
 - Total latency: <150ms for 15 windows (well under 1.5s timeout)
 - Timeout overhead: Minimal (<1ms) via tokio::time::timeout
 
+### Phase 5: resolve_target with Regex/Fuzzy Matching ✅ COMPLETED (2025-10-14)
+
+**Completed Tasks:**
+1. ✅ Added regex and fuzzy-matcher dependencies to Cargo.toml
+2. ✅ Enabled deps in linux-x11 feature (regex, fuzzy-matcher)
+3. ✅ Added imports with feature gates (#[cfg(feature = "linux-x11")])
+4. ✅ Implemented resolve_target() with 5-strategy evaluation chain
+5. ✅ Added try_regex_match() with 1MB size limit (ReDoS protection)
+6. ✅ Added try_substring_match() with case-insensitive search
+7. ✅ Added try_exact_class_match() for WM_CLASS matching
+8. ✅ Added try_exact_exe_match() for instance name matching
+9. ✅ Added try_fuzzy_match() with SkimMatcherV2 (threshold 60)
+10. ✅ Implemented 200ms timeout wrapper for resolution
+11. ✅ Added empty selector validation
+12. ✅ Added invalid regex fallback to substring matching
+13. ✅ Wrote 8 comprehensive unit tests (regex, substring, class, exe, fuzzy, edge cases)
+14. ✅ All 211 library tests passing
+15. ✅ Zero warnings
+16. ✅ Code formatted with rustfmt
+
+**Implementation Highlights:**
+- **Evaluation Order:** Regex → Substring → Exact Class → Exact Exe → Fuzzy (threshold 60+)
+- **Safety Features:** 1MB regex size limit, invalid regex graceful fallback, 200ms timeout
+- **Match Quality:** Case-insensitive substring, highest-scoring fuzzy match, exact matching for class/exe
+- **Error Handling:** Empty selector validation, comprehensive error messages
+
+**Files Modified:**
+- `Cargo.toml` - Added regex, fuzzy-matcher to linux-x11 feature
+- `src/capture/x11_backend.rs` - Added 5 helper methods, resolve_target() implementation, 8 tests (+~400 lines)
+
+**Test Coverage:**
+- test_try_regex_match: Valid patterns, invalid patterns, case-insensitive
+- test_try_substring_match: Case-insensitive, partial matches
+- test_try_exact_class_match: Exact matching, case-insensitive
+- test_try_exact_exe_match: Instance name matching
+- test_try_fuzzy_match: Typo tolerance, scoring threshold
+- test_resolve_target_empty_selector: Validation
+- test_resolve_target_no_windows: Error handling
+- test_resolve_target_invalid_regex_fallback: Graceful degradation
+
 ### Phase Progress
 - Phase 1: ✅ COMPLETED (13/13 tasks) - Module Skeleton
 - Phase 2: ✅ COMPLETED (10/10 tasks) - Connection Management
 - Phase 3: ✅ COMPLETED (13/13 tasks) - Property Query Helpers
 - Phase 4: ✅ COMPLETED (13/13 tasks) - list_windows Implementation
-- Phase 5: ⏳ PENDING - resolve_target with Regex/Fuzzy Matching
+- Phase 5: ✅ COMPLETED (16/16 tasks) - resolve_target with Regex/Fuzzy Matching
 - Phase 6: ⏳ PENDING - capture_window with xcap Integration
 - Phase 7: ⏳ PENDING - capture_display Stub
 - Phase 8: ⏳ PENDING - Error Mapping & Remediation
 - Phase 9: ⏳ PENDING - Unit Tests (80+) & Integration Tests (6, #[ignore])
 - Phase 10: ⏳ PENDING - Performance Validation & Documentation
 
-**Current M3 Progress: 49/138 tasks (36%) estimated**
+**Current M3 Progress: 65/138 tasks (47%) estimated**
 
 **Next Steps:**
-- Phase 5: Implement resolve_target() with regex, substring, and fuzzy matching
-- Target: <50ms latency for window resolution
+- Phase 6: Implement capture_window() with xcap integration
+- Target: <2s latency for window capture

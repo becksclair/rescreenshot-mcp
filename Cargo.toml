@@ -49,6 +49,10 @@ rand = { version = "0.8", optional = true }
 image = { version = "0.25", features = ["png", "jpeg", "webp"], optional = true }
 tempfile = { version = "3.10", optional = true }
 
+# Window matching (for X11 backend)
+regex = { version = "1.10", optional = true }
+fuzzy-matcher = { version = "0.3", optional = true }
+
 # Platform-specific dependencies
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.12", optional = true }
@@ -72,7 +76,7 @@ criterion = "0.5"
 default = ["image-processing"]
 # Platform backends (will be enabled in future milestones)
 linux-wayland = ["ashpd", "keyring", "chacha20poly1305", "sha2", "hostname", "hkdf", "rand", "pipewire"]
-linux-x11 = ["x11rb", "xcap"]
+linux-x11 = ["x11rb", "xcap", "regex", "fuzzy-matcher"]
 windows-backend = ["windows-sys", "windows-capture"]
 macos-backend = ["objc2-screen-capture-kit", "core-graphics"]
 # Image processing (M1)
