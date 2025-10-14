@@ -50,7 +50,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use async_trait::async_trait;
 use x11rb::{
     connection::Connection as _,
-    protocol::xproto::{Atom, AtomEnum, ConnectionExt as _, Window},
+    protocol::xproto::{Atom, ConnectionExt as _, Window},
     rust_connection::RustConnection,
 };
 
@@ -59,6 +59,23 @@ use crate::{
     error::{CaptureError, CaptureResult},
     model::{BackendType, Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
 };
+
+/// Timeout for window enumeration operations (1.5s)
+///
+/// This allows approximately 100ms per window for systems with ~15 windows,
+/// keeping total latency under the 2s target for list_windows + resolve_target
+/// + capture_window workflow.
+const LIST_WINDOWS_TIMEOUT_MS: u64 = 1500;
+
+/// Timeout for single window capture operations (2s as per M3 spec)
+///
+/// xcap capture operations typically complete in <500ms, but we allow 2s
+/// to accommodate:
+/// - Large windows (4K, 8K displays)
+/// - X server latency on remote connections
+/// - Compositing effects on some window managers
+#[allow(dead_code)] // Will be used in Phase 6 (capture_window implementation)
+const CAPTURE_WINDOW_TIMEOUT_MS: u64 = 2000;
 
 /// X11 screenshot backend using x11rb + xcap
 ///
@@ -82,6 +99,7 @@ pub struct X11Backend {
     /// Lazy shared X11 connection (reconnect-on-error)
     conn:       Arc<Mutex<Option<RustConnection>>>,
     /// Screen index (typically 0 for default screen)
+    #[allow(dead_code)] // Will be used in future phases (multi-screen support)
     screen_idx: usize,
     /// Cached EWMH atoms (initialized once on first use)
     atoms:      OnceLock<X11Atoms>,
@@ -108,6 +126,45 @@ struct X11Atoms {
 }
 
 impl X11Backend {
+    /// Wraps async operation with timeout
+    ///
+    /// This helper ensures all X11 operations complete within expected time
+    /// bounds. If an operation takes longer than the timeout, it returns a
+    /// [`CaptureError::CaptureTimeout`].
+    ///
+    /// # Arguments
+    ///
+    /// - `future` - The async operation to wrap
+    /// - `timeout_ms` - Timeout duration in milliseconds
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(T)` - Operation completed successfully
+    /// - `Err(CaptureTimeout)` - Operation exceeded timeout
+    /// - `Err(...)` - Inner operation error propagated
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let result = Self::with_timeout(
+    ///     async { some_x11_operation().await },
+    ///     LIST_WINDOWS_TIMEOUT_MS,
+    /// ).await?;
+    /// ```
+    async fn with_timeout<F, T>(future: F, timeout_ms: u64) -> CaptureResult<T>
+    where
+        F: std::future::Future<Output = CaptureResult<T>>,
+    {
+        tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), future)
+            .await
+            .map_err(|_| {
+                tracing::warn!("X11 operation timed out after {}ms", timeout_ms);
+                CaptureError::CaptureTimeout {
+                    duration_ms: timeout_ms,
+                }
+            })?
+    }
+
     /// Creates a new X11Backend instance
     ///
     /// The connection is not established until the first operation. This allows
@@ -657,6 +714,74 @@ impl X11Backend {
         tracing::debug!("Found {} windows in _NET_CLIENT_LIST", windows.len());
         Ok(windows)
     }
+
+    /// Fetches metadata for a single window
+    ///
+    /// This method queries all properties (title, class, PID) for a window
+    /// and constructs a [`WindowInfo`] struct. Properties are fetched
+    /// sequentially to reuse the same connection.
+    ///
+    /// Windows without titles (likely system/background windows) are filtered
+    /// out by returning `None`.
+    ///
+    /// # Arguments
+    ///
+    /// - `conn` - X11 connection reference
+    /// - `window` - Window ID to query
+    /// - `atoms` - Cached EWMH atoms for property queries
+    ///
+    /// # Returns
+    ///
+    /// - `Some(WindowInfo)` - Window metadata if title exists
+    /// - `None` - Window has no title (likely system window)
+    fn fetch_window_info(
+        &self,
+        conn: &RustConnection,
+        window: Window,
+        atoms: &X11Atoms,
+    ) -> Option<WindowInfo> {
+        // Try UTF-8 title first (_NET_WM_NAME), fallback to Latin-1 (WM_NAME)
+        let title = self
+            .get_property_utf8(conn, window, atoms.net_wm_name, atoms.utf8_string)
+            .unwrap_or_else(|_| {
+                self.get_property_latin1(conn, window, atoms.wm_name)
+                    .unwrap_or_default()
+            });
+
+        // Skip windows without titles (system windows, background processes)
+        if title.is_empty() {
+            tracing::trace!("Skipping window {} (no title)", window);
+            return None;
+        }
+
+        // Query WM_CLASS (instance + class names)
+        let (instance, class) = self
+            .get_property_class(conn, window, atoms.wm_class)
+            .unwrap_or_default();
+
+        // Query _NET_WM_PID
+        let pid = self
+            .get_property_pid(conn, window, atoms.net_wm_pid)
+            .unwrap_or(0);
+
+        tracing::trace!(
+            "Window {}: title='{}', class='{}', instance='{}', pid={}",
+            window,
+            title,
+            class,
+            instance,
+            pid
+        );
+
+        Some(WindowInfo::new(
+            window.to_string(),
+            title,
+            class,
+            instance, // owner field = instance name
+            pid,
+            BackendType::X11,
+        ))
+    }
 }
 
 #[async_trait]
@@ -676,9 +801,39 @@ impl CaptureFacade for X11Backend {
     /// - [`CaptureError::BackendNotAvailable`] - X11 connection failed
     /// - [`CaptureError::CaptureTimeout`] - Operation exceeded 1.5s
     async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
-        tracing::info!("X11 list_windows called (stub)");
-        // TODO: Implement in Phase 4
-        Ok(vec![])
+        Self::with_timeout(
+            async {
+                tracing::debug!("Starting X11 window enumeration");
+
+                // Get connection and atoms
+                let (conn, screen_idx) = self.get_or_create_connection()?;
+                let atoms = self.get_atoms().await?;
+
+                // Query _NET_CLIENT_LIST for all window IDs
+                let window_ids = self.get_client_list(&conn, screen_idx, atoms.net_client_list)?;
+
+                tracing::debug!("Found {} window IDs, fetching metadata", window_ids.len());
+
+                // Fetch metadata for all windows sequentially
+                // (Parallel fetching would require multiple connections, which is more complex)
+                let mut windows = Vec::new();
+                for &win_id in &window_ids {
+                    if let Some(info) = self.fetch_window_info(&conn, win_id, &atoms) {
+                        windows.push(info);
+                    }
+                }
+
+                tracing::info!(
+                    "Enumerated {} X11 windows (filtered {} system windows)",
+                    windows.len(),
+                    window_ids.len() - windows.len()
+                );
+
+                Ok(windows)
+            },
+            LIST_WINDOWS_TIMEOUT_MS,
+        )
+        .await
     }
 
     /// Resolves a window selector to a window handle
@@ -825,14 +980,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_windows_stub() {
+    async fn test_list_windows_returns_windows() {
+        // Only run if DISPLAY is set (requires live X11 session)
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
             let result = backend.list_windows().await;
-            // Stub returns empty vec
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap().len(), 0);
+
+            // Should succeed (even if empty on minimal systems)
+            assert!(result.is_ok(), "list_windows should succeed with DISPLAY set");
+
+            let windows = result.unwrap();
+            tracing::debug!("Found {} windows in test", windows.len());
+
+            // Verify structure of returned windows
+            for window in &windows {
+                // All windows should have non-empty IDs
+                assert!(!window.id.is_empty(), "Window ID should not be empty");
+                // All windows should have non-empty titles (filtered by fetch_window_info)
+                assert!(!window.title.is_empty(), "Window title should not be empty");
+                // Backend should be X11
+                assert_eq!(window.backend, BackendType::X11);
+                tracing::trace!("Window: id={}, title='{}'", window.id, window.title);
+            }
         }
+    }
+
+    #[tokio::test]
+    async fn test_list_windows_timeout() {
+        // This test validates the timeout wrapper exists and compiles
+        // Actual timeout behavior is hard to test without mocking
+        if std::env::var("DISPLAY").is_ok() {
+            let backend = X11Backend::new().unwrap();
+            let result = backend.list_windows().await;
+            // Should complete within timeout (1.5s is generous for real systems)
+            assert!(
+                result.is_ok()
+                    || matches!(
+                        result.unwrap_err(),
+                        CaptureError::CaptureTimeout { .. }
+                            | CaptureError::BackendNotAvailable { .. }
+                    )
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_with_timeout_helper() {
+        // Test timeout helper with fast operation
+        let fast_result = X11Backend::with_timeout(
+            async { Ok::<_, CaptureError>(42) },
+            100, // 100ms timeout
+        )
+        .await;
+        assert!(fast_result.is_ok());
+        assert_eq!(fast_result.unwrap(), 42);
+
+        // Test timeout helper with slow operation
+        let slow_result = X11Backend::with_timeout(
+            async {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                Ok::<_, CaptureError>(())
+            },
+            50, // 50ms timeout (less than sleep time)
+        )
+        .await;
+        assert!(slow_result.is_err());
+        assert!(matches!(slow_result.unwrap_err(), CaptureError::CaptureTimeout { .. }));
     }
 
     #[tokio::test]
