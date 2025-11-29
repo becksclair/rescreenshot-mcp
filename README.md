@@ -24,30 +24,137 @@ A production-grade Model Context Protocol (MCP) stdio server that enables coding
 
 ### Requirements
 
-- Rust 1.75+ (tested on 1.92.0-nightly)
-- Linux (Fedora/Ubuntu/Arch), Windows 10/11, or macOS 12+
+- **Rust:** 1.75+ (tested on 1.92.0-nightly)
+- **Platform:** Linux (Fedora/Ubuntu/Arch), Windows 10/11, or macOS 12+
 
-### Wayland Setup (Linux)
+### System Dependencies
 
-For Wayland capture support, install xdg-desktop-portal and backend:
+#### All Platforms
 
+- **Build tools:** GCC, make, pkg-config
+- **Rust toolchain:** `rustup` (https://rustup.rs/)
+
+#### Linux - Build Dependencies
+
+**Ubuntu/Debian:**
 ```bash
-# Ubuntu/Debian
-sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk pipewire
+# Base build tools
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential \
+  pkg-config \
+  libssl-dev
 
-# Fedora
-sudo dnf install xdg-desktop-portal xdg-desktop-portal-gtk pipewire
+# X11 backend support (M3+)
+sudo apt-get install -y \
+  libx11-dev \
+  libxcb1-dev \
+  libxcb-render0-dev \
+  libxcb-image0-dev
 
-# Arch
-sudo pacman -S xdg-desktop-portal xdg-desktop-portal-gtk pipewire
+# Wayland backend support (M2+)
+sudo apt-get install -y \
+  libwayland-dev \
+  wayland-protocols \
+  libdrm-dev \
+  libgbm-dev \
+  libegl1-mesa-dev \
+  libgl1-mesa-dev \
+  libportal-dev \
+  libsecret-1-dev
 ```
 
-Verify portal is running:
+**Fedora/RHEL:**
+```bash
+# Base build tools
+sudo dnf install -y \
+  gcc \
+  make \
+  pkg-config \
+  openssl-devel
+
+# X11 backend support
+sudo dnf install -y \
+  libX11-devel \
+  libxcb-devel \
+  libxkbcommon-devel
+
+# Wayland backend support
+sudo dnf install -y \
+  wayland-devel \
+  wayland-protocols-devel \
+  libdrm-devel \
+  libgbm-devel \
+  mesa-libEGL-devel \
+  mesa-libGL-devel \
+  libportal-devel \
+  libsecret-devel
+```
+
+**Arch Linux:**
+```bash
+# Base build tools
+sudo pacman -Syu
+sudo pacman -S base-devel pkg-config
+
+# X11 backend support
+sudo pacman -S xorg-server xorg-xcb-util
+
+# Wayland backend support
+sudo pacman -S \
+  wayland \
+  wayland-protocols \
+  libdrm \
+  libgbm \
+  mesa \
+  libportal \
+  libsecret
+```
+
+#### Linux - Runtime Dependencies
+
+**Wayland Session:**
+```bash
+# Ubuntu/Debian
+sudo apt-get install -y \
+  xdg-desktop-portal \
+  xdg-desktop-portal-gtk \
+  pipewire
+
+# Fedora
+sudo dnf install -y \
+  xdg-desktop-portal \
+  xdg-desktop-portal-gtk \
+  pipewire
+
+# Arch
+sudo pacman -S \
+  xdg-desktop-portal \
+  xdg-desktop-portal-gtk \
+  pipewire
+```
+
+Verify XDG Desktop Portal is running:
 ```bash
 systemctl --user status xdg-desktop-portal
 ```
 
-See [Prime Wayland Consent Guide](./docs/prime_wayland_consent.md) for detailed setup.
+**X11 Session:**
+- Standard X11 display server (usually pre-installed)
+- `xcap` library will be compiled from source
+
+#### Windows
+
+- **Visual Studio Build Tools 2019+** or **MSVC compiler** (part of Visual Studio)
+- **Windows 10/11** with graphics drivers
+
+#### macOS
+
+- **Xcode Command Line Tools:**
+  ```bash
+  xcode-select --install
+  ```
+- **macOS 12.0+** with native graphics support
 
 ### Installation
 
@@ -59,9 +166,13 @@ cd screenshot-mcp
 # Build the project
 cargo build --release
 
-# Run tests
+# Run tests (verify everything works)
 cargo test
 ```
+
+### Wayland-Specific Setup
+
+For Wayland capture support, see [Prime Wayland Consent Guide](./docs/prime_wayland_consent.md) for detailed setup.
 
 ### Running the Server
 
@@ -336,11 +447,51 @@ Each backend implements the `CaptureFacade` trait for consistent cross-platform 
 
 ## Technical Details
 
-- **MCP SDK:** rmcp 0.3.2 (official Rust MCP SDK)
+### Rust Dependencies
+
+- **MCP SDK:** rmcp 0.8 (official Rust MCP SDK)
 - **Async Runtime:** Tokio with multi-threaded runtime
 - **Serialization:** serde + schemars for JSON and JSON Schema
 - **Logging:** tracing + tracing-subscriber
 - **Error Handling:** thiserror for typed errors
+- **Image Processing:** image crate with PNG/WebP/JPEG support
+- **Platform Detection:** Custom detection logic in `util/detect.rs`
+
+### System Dependency Reference
+
+#### Linux X11 Backend
+| Dependency | Ubuntu/Debian | Fedora | Arch | Purpose |
+|---|---|---|---|---|
+| libx11 | `libx11-dev` | `libX11-devel` | `xorg-server` | X11 protocol |
+| libxcb | `libxcb1-dev` | `libxcb-devel` | `libxcb` | X11 protocol |
+| libxkbcommon | N/A | `libxkbcommon-devel` | `libxkbcommon` | Keyboard handling |
+
+#### Linux Wayland Backend
+| Dependency | Ubuntu/Debian | Fedora | Arch | Purpose |
+|---|---|---|---|---|
+| libwayland | `libwayland-dev` | `wayland-devel` | `wayland` | Wayland protocol |
+| wayland-protocols | `wayland-protocols` | `wayland-protocols-devel` | `wayland-protocols` | Wayland specs |
+| libdrm | `libdrm-dev` | `libdrm-devel` | `libdrm` | Graphics |
+| libgbm | `libgbm-dev` | `libgbm-devel` | `libgbm` | Graphics buffer |
+| libegl | `libegl1-mesa-dev` | `mesa-libEGL-devel` | `mesa` | Graphics API |
+| libGL | `libgl1-mesa-dev` | `mesa-libGL-devel` | `mesa` | Graphics |
+| libportal | `libportal-dev` | `libportal-devel` | `libportal` | Desktop portal |
+| libsecret | `libsecret-1-dev` | `libsecret-devel` | `libsecret` | Token storage |
+
+#### Linux Runtime
+| Dependency | Ubuntu/Debian | Fedora | Arch | Purpose |
+|---|---|---|---|---|
+| xdg-desktop-portal | `xdg-desktop-portal` | `xdg-desktop-portal` | `xdg-desktop-portal` | Portal daemon |
+| portal backend | `xdg-desktop-portal-gtk` | `xdg-desktop-portal-gtk` | `xdg-desktop-portal-gtk` | Portal UI |
+| pipewire | `pipewire` | `pipewire` | `pipewire` | Audio/video server |
+
+#### Windows
+- Visual Studio Build Tools 2019+ (includes MSVC)
+- Windows SDK headers (usually with Visual Studio)
+
+#### macOS
+- Xcode Command Line Tools (includes clang)
+- macOS 12.0+ SDK (included with Xcode)
 
 ## Contributing
 
