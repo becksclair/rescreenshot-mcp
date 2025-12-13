@@ -24,7 +24,7 @@
 //!
 //! ```
 //! use screenshot_mcp::{
-//!     capture::{mock::MockBackend, CaptureFacade},
+//!     capture::{CaptureFacade, mock::MockBackend},
 //!     model::{CaptureOptions, WindowSelector},
 //! };
 //!
@@ -52,7 +52,7 @@
 //! use std::time::Duration;
 //!
 //! use screenshot_mcp::{
-//!     capture::{mock::MockBackend, CaptureFacade},
+//!     capture::{CaptureFacade, mock::MockBackend},
 //!     model::CaptureOptions,
 //! };
 //!
@@ -70,7 +70,7 @@
 //!
 //! ```
 //! use screenshot_mcp::{
-//!     capture::{mock::MockBackend, CaptureFacade},
+//!     capture::{CaptureFacade, mock::MockBackend},
 //!     error::CaptureError,
 //!     model::{BackendType, WindowSelector},
 //! };
@@ -285,6 +285,14 @@ impl MockBackend {
                 CaptureError::EncryptionFailed { reason } => CaptureError::EncryptionFailed {
                     reason: reason.clone(),
                 },
+                CaptureError::UnsupportedWindowsVersion {
+                    current_build,
+                    minimum_build,
+                } => CaptureError::UnsupportedWindowsVersion {
+                    current_build: *current_build,
+                    minimum_build: *minimum_build,
+                },
+                CaptureError::WindowClosed => CaptureError::WindowClosed,
             });
         }
         Ok(())

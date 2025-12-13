@@ -15,7 +15,7 @@ use std::time::Duration;
 // These are always available during testing since perf module has #[cfg(any(feature =
 // "perf-tests", test))]
 #[cfg(any(feature = "perf-tests", test))]
-pub use screenshot_mcp::perf::{measure_operation, print_timing_result, PerformanceThresholds};
+pub use screenshot_mcp::perf::{PerformanceThresholds, measure_operation, print_timing_result};
 #[cfg(feature = "linux-wayland")]
 use screenshot_mcp::{
     capture::wayland_backend::WaylandBackend, model::CaptureOptions, util::key_store::KeyStore,

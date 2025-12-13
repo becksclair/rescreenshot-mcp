@@ -107,6 +107,22 @@ pub enum CaptureError {
         /// Reason for encryption failure
         reason: String,
     },
+
+    /// Windows build version too old for WGC
+    #[error(
+        "Windows Graphics Capture requires Windows 10 version 1803+ (build {minimum_build}), but \
+         found build {current_build}"
+    )]
+    UnsupportedWindowsVersion {
+        /// Current Windows build number
+        current_build: u32,
+        /// Minimum required build number
+        minimum_build: u32,
+    },
+
+    /// Target window was closed during capture
+    #[error("Target window was closed or became invalid during capture")]
+    WindowClosed,
 }
 
 impl CaptureError {
@@ -233,6 +249,14 @@ impl CaptureError {
             CaptureError::EncryptionFailed { .. } => {
                 "Token encryption/decryption failed. This may indicate file corruption or system \
                  configuration changes. Try calling prime_wayland_consent again."
+            }
+            CaptureError::UnsupportedWindowsVersion { .. } => {
+                "Windows Graphics Capture requires Windows 10 version 1803 (April 2018 Update) or \
+                 later. Update Windows to use screenshot capture, or use an alternative tool."
+            }
+            CaptureError::WindowClosed => {
+                "The target window was closed or destroyed while attempting capture. Ensure the \
+                 window remains open during capture, or use display capture as an alternative."
             }
         }
     }
@@ -463,5 +487,35 @@ mod tests {
 
         let debug = format!("{:?}", error);
         assert!(debug.contains("WindowNotFound"));
+    }
+
+    #[test]
+    fn test_unsupported_windows_version_error() {
+        let error = CaptureError::UnsupportedWindowsVersion {
+            current_build: 15063,
+            minimum_build: 17134,
+        };
+
+        let msg = error.to_string();
+        assert!(msg.contains("Windows Graphics Capture"));
+        assert!(msg.contains("15063"));
+        assert!(msg.contains("17134"));
+
+        let hint = error.remediation_hint();
+        assert!(hint.contains("Windows 10 version 1803"));
+        assert!(hint.contains("Update Windows"));
+    }
+
+    #[test]
+    fn test_window_closed_error() {
+        let error = CaptureError::WindowClosed;
+
+        let msg = error.to_string();
+        assert!(msg.contains("closed"));
+        assert!(msg.contains("invalid"));
+
+        let hint = error.remediation_hint();
+        assert!(hint.contains("closed or destroyed"));
+        assert!(hint.contains("display capture"));
     }
 }

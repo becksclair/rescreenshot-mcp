@@ -6,9 +6,10 @@
 use std::sync::Arc;
 
 use rmcp::{
+    ServerHandler,
     handler::server::tool::ToolRouter,
     model::{CallToolResult, Content, ErrorData as McpError, ServerInfo},
-    tool, tool_router, ServerHandler,
+    tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,10 @@ fn convert_capture_error_to_mcp(error: CaptureError) -> McpError {
         CaptureError::EncryptionFailed { .. } => {
             McpError::internal_error(format!("{}", error), None)
         }
+        CaptureError::UnsupportedWindowsVersion { .. } => {
+            McpError::internal_error(format!("{}", error), None)
+        }
+        CaptureError::WindowClosed => McpError::invalid_params(format!("{}", error), None),
     }
 }
 

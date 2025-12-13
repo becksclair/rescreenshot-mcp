@@ -25,7 +25,7 @@ mod tests {
     use std::time::Instant;
 
     use screenshot_mcp::{
-        capture::{x11_backend::X11Backend, CaptureFacade},
+        capture::{CaptureFacade, x11_backend::X11Backend},
         model::{CaptureOptions, WindowSelector},
     };
 

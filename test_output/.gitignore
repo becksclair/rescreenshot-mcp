@@ -1,0 +1,8 @@
+# Ignore all screenshot output files
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# But track this gitignore
+!.gitignore

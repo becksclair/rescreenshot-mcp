@@ -61,15 +61,15 @@
 
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
 use ashpd::desktop::{
-    screencast::{CursorMode, SourceType as PortalSourceType},
     PersistMode as PortalPersistMode,
+    screencast::{CursorMode, SourceType as PortalSourceType},
 };
 use async_trait::async_trait;
 use image::GenericImageView;

@@ -29,9 +29,9 @@
 use std::{process, sync::Arc, time::Duration};
 
 use screenshot_mcp::{
-    capture::{wayland_backend::WaylandBackend, CaptureFacade},
+    capture::{CaptureFacade, wayland_backend::WaylandBackend},
     model::{CaptureOptions, SourceType},
-    perf::{measure_operation, PerformanceThresholds},
+    perf::{PerformanceThresholds, measure_operation},
     util::key_store::KeyStore,
 };
 

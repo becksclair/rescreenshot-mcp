@@ -131,11 +131,7 @@ impl TimingResult {
 
     /// Returns a human-readable status string ("✓" or "✗")
     pub fn status_symbol(&self) -> &'static str {
-        if self.success {
-            "✓"
-        } else {
-            "✗"
-        }
+        if self.success { "✓" } else { "✗" }
     }
 }
 

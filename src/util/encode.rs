@@ -30,12 +30,12 @@
 use std::io::Cursor;
 
 use image::{
+    ImageEncoder,
     codecs::{
         jpeg::JpegEncoder,
         png::{CompressionType, FilterType, PngEncoder},
         webp::WebPEncoder,
     },
-    ImageEncoder,
 };
 
 use crate::{

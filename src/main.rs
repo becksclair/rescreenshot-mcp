@@ -5,12 +5,12 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use rmcp::{transport::stdio, ServiceExt};
+use rmcp::{ServiceExt, transport::stdio};
 use screenshot_mcp::{
     capture::MockBackend, mcp::ScreenshotMcpServer, util::temp_files::TempFileManager,
 };
 use tracing::info;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
 async fn main() -> Result<()> {

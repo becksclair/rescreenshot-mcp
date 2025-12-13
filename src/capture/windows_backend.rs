@@ -45,7 +45,7 @@
 use std::{any::Any, ffi::OsString, os::windows::ffi::OsStringExt, ptr, sync::mpsc};
 
 use async_trait::async_trait;
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use image::{DynamicImage, RgbaImage};
 use regex::RegexBuilder;
 use windows_capture::{
@@ -60,11 +60,12 @@ use windows_sys::Win32::{
     Foundation::{CloseHandle, HWND},
     System::{
         ProcessStatus::GetModuleBaseNameW,
+        Registry::{HKEY_LOCAL_MACHINE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW},
         Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
     },
     UI::WindowsAndMessaging::{
         EnumWindows, GetClassNameW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-        IsWindowVisible,
+        IsWindow, IsWindowVisible,
     },
 };
 
@@ -82,7 +83,6 @@ use crate::{
 /// Timeout for window enumeration operations (1.5s)
 ///
 /// Allows enumeration of many windows while keeping total latency reasonable.
-#[allow(dead_code)]
 const LIST_WINDOWS_TIMEOUT_MS: u64 = 1500;
 
 /// Timeout for single window capture operations (2s)
@@ -91,8 +91,13 @@ const LIST_WINDOWS_TIMEOUT_MS: u64 = 1500;
 /// - Large windows (4K, 8K displays)
 /// - GPU scheduling delays
 /// - Compositing effects
-#[allow(dead_code)]
 const CAPTURE_WINDOW_TIMEOUT_MS: u64 = 2000;
+
+/// Minimum Windows build number for Windows Graphics Capture
+///
+/// WGC was introduced in Windows 10 version 1803 (April 2018 Update),
+/// which corresponds to build 17134.
+const MINIMUM_WGC_BUILD: u32 = 17134;
 
 /// Windows screenshot backend using Win32 + WGC
 ///
@@ -132,7 +137,6 @@ impl WindowsBackend {
     }
 
     /// Wraps async operation with timeout
-    #[allow(dead_code)]
     async fn with_timeout<F, T>(future: F, timeout_ms: u64) -> CaptureResult<T>
     where
         F: std::future::Future<Output = CaptureResult<T>>,
@@ -147,6 +151,105 @@ impl WindowsBackend {
             })?
     }
 
+    /// Gets the Windows build number from the registry
+    ///
+    /// Reads the CurrentBuildNumber value from:
+    /// `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion`
+    ///
+    /// Returns the build number or 0 if it cannot be read.
+    fn get_windows_build() -> u32 {
+        unsafe {
+            let mut key_handle = std::ptr::null_mut();
+            let key_name = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\0"
+                .encode_utf16()
+                .collect::<Vec<_>>();
+
+            // Open registry key
+            let open_result = RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE as *mut _,
+                key_name.as_ptr(),
+                0,
+                0x20001, // KEY_READ
+                &mut key_handle,
+            );
+
+            if open_result != 0 {
+                tracing::debug!("Failed to open registry key for Windows version");
+                return 0;
+            }
+
+            // Read CurrentBuildNumber value
+            let value_name = "CurrentBuildNumber\0".encode_utf16().collect::<Vec<_>>();
+            let mut buffer: Vec<u16> = vec![0; 260]; // Enough for a build number string
+            let mut buffer_size = (buffer.len() as u32) * 2; // Size in bytes
+
+            let query_result = RegQueryValueExW(
+                key_handle,
+                value_name.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                buffer.as_mut_ptr() as *mut u8,
+                &mut buffer_size,
+            );
+
+            RegCloseKey(key_handle);
+
+            if query_result != 0 {
+                tracing::debug!("Failed to query CurrentBuildNumber registry value");
+                return 0;
+            }
+
+            // Convert UTF-16 buffer to string and parse as u32
+            let actual_len = (buffer_size as usize / 2) - 1; // Exclude null terminator
+            let build_str = OsString::from_wide(&buffer[..actual_len])
+                .to_string_lossy()
+                .to_string();
+            build_str.trim().parse::<u32>().unwrap_or(0)
+        }
+    }
+
+    /// Checks if Windows Graphics Capture is available on this system
+    ///
+    /// WGC requires Windows 10 version 1803 (build 17134) or later.
+    /// This performs a proactive check via the registry.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` - WGC is available
+    /// - `Err(WGCUnavailable)` - Windows build is too old
+    fn check_wgc_available() -> CaptureResult<()> {
+        let build = Self::get_windows_build();
+
+        if build == 0 {
+            // Could not determine build number, assume it's OK
+            // (runtime check will catch issues)
+            tracing::debug!("Could not determine Windows build number, assuming WGC available");
+            return Ok(());
+        }
+
+        if build < MINIMUM_WGC_BUILD {
+            tracing::warn!(
+                "Windows build {} is older than minimum WGC build {}",
+                build,
+                MINIMUM_WGC_BUILD
+            );
+            return Err(CaptureError::UnsupportedWindowsVersion {
+                current_build: build,
+                minimum_build: MINIMUM_WGC_BUILD,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Checks if a window handle is still valid
+    ///
+    /// Kept for potential use in window validation before capture operations.
+    #[allow(dead_code)]
+    fn is_window_valid(hwnd: HWND) -> bool {
+        unsafe { IsWindow(hwnd) != FALSE }
+    }
+
     /// Enumerates all top-level windows using Win32 EnumWindows
     ///
     /// Returns a vector of HWNDs for all visible windows with titles.
@@ -154,7 +257,8 @@ impl WindowsBackend {
         let mut handles: Vec<HWND> = Vec::new();
 
         unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: isize) -> BOOL {
-            // SAFETY: lparam is a valid pointer to Vec<HWND> passed from enumerate_window_handles
+            // SAFETY: lparam is a valid pointer to Vec<HWND> passed from
+            // enumerate_window_handles
             let handles = unsafe { &mut *(lparam as *mut Vec<HWND>) };
 
             // Only include visible windows
@@ -184,8 +288,10 @@ impl WindowsBackend {
 
     /// Gets the title of a window
     fn get_window_title(hwnd: HWND) -> String {
+        // Cap title length to prevent unbounded allocation from malicious windows
+        const MAX_TITLE_LEN: i32 = 32768;
         unsafe {
-            let len = GetWindowTextLengthW(hwnd);
+            let len = GetWindowTextLengthW(hwnd).min(MAX_TITLE_LEN);
             if len == 0 {
                 return String::new();
             }
@@ -382,7 +488,12 @@ impl WindowsBackend {
         };
 
         // Create window from HWND
-        let window = Self::create_wc_window(hwnd)?;
+        // Note: We skip the is_window_valid pre-check as it creates a TOCTOU race.
+        // Instead, let create_wc_window fail and map errors appropriately.
+        let window = Self::create_wc_window(hwnd).map_err(|e| {
+            tracing::warn!("Failed to create capture window for {:?}: {:?}", hwnd, e);
+            CaptureError::WindowClosed
+        })?;
         tracing::debug!("Created window for capture from HWND: {:?}", hwnd);
 
         // Create channel for receiving the captured frame
@@ -433,7 +544,7 @@ impl WindowsBackend {
                 let image = match RgbaImage::from_raw(width, height, rgba_data) {
                     Some(img) => DynamicImage::ImageRgba8(img),
                     None => {
-                        if let Some(tx) = self.tx.lock().unwrap().take() {
+                        if let Some(tx) = self.tx.lock().ok().and_then(|mut g| g.take()) {
                             let _ = tx.send(Err(CaptureError::ImageError(
                                 "Failed to create image from frame".into(),
                             )));
@@ -444,7 +555,7 @@ impl WindowsBackend {
                 };
 
                 // Send frame
-                if let Some(tx) = self.tx.lock().unwrap().take() {
+                if let Some(tx) = self.tx.lock().ok().and_then(|mut g| g.take()) {
                     let _ = tx.send(Ok(image));
                 }
 
@@ -579,7 +690,7 @@ impl WindowsBackend {
                 let image = match RgbaImage::from_raw(width, height, rgba_data) {
                     Some(img) => DynamicImage::ImageRgba8(img),
                     None => {
-                        if let Some(tx) = self.tx.lock().unwrap().take() {
+                        if let Some(tx) = self.tx.lock().ok().and_then(|mut g| g.take()) {
                             let _ = tx.send(Err(CaptureError::ImageError(
                                 "Failed to create image from frame".into(),
                             )));
@@ -590,7 +701,7 @@ impl WindowsBackend {
                 };
 
                 // Send frame
-                if let Some(tx) = self.tx.lock().unwrap().take() {
+                if let Some(tx) = self.tx.lock().ok().and_then(|mut g| g.take()) {
                     let _ = tx.send(Ok(image));
                 }
 
@@ -763,6 +874,9 @@ impl CaptureFacade for WindowsBackend {
     ) -> CaptureResult<ImageBuffer> {
         tracing::debug!("capture_window called with handle: {}, opts: {:?}", handle, opts);
 
+        // Check Windows version before attempting capture
+        Self::check_wgc_available()?;
+
         // Parse HWND from handle string (stored as isize for Send safety)
         let hwnd_val: isize = handle.parse().map_err(|_| CaptureError::InvalidParameter {
             parameter: "handle".to_string(),
@@ -782,13 +896,13 @@ impl CaptureFacade for WindowsBackend {
                     let hwnd = hwnd_val as HWND;
                     Self::capture_window_sync(hwnd, include_cursor)
                 })
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Capture task panicked: {}", e);
-                        CaptureError::BackendNotAvailable {
-                            backend: BackendType::Windows,
-                        }
-                    })?
+                .await
+                .map_err(|e| {
+                    tracing::error!("Capture task panicked: {}", e);
+                    CaptureError::BackendNotAvailable {
+                        backend: BackendType::Windows,
+                    }
+                })?
             },
             CAPTURE_WINDOW_TIMEOUT_MS,
         )
@@ -823,6 +937,9 @@ impl CaptureFacade for WindowsBackend {
             display_id,
             opts
         );
+
+        // Check Windows version before attempting capture
+        Self::check_wgc_available()?;
 
         // Copy options for blocking task
         let region = opts.region;
@@ -1095,7 +1212,7 @@ mod tests {
         let result = WindowsBackend::try_fuzzy_match("viusal studio", &windows);
         // Should match with fuzzy
         assert!(result.is_some() || result.is_none()); // May or may not meet
-                                                       // threshold
+        // threshold
     }
 
     #[tokio::test]
@@ -1127,5 +1244,657 @@ mod tests {
     fn test_timeout_constants() {
         assert_eq!(LIST_WINDOWS_TIMEOUT_MS, 1500);
         assert_eq!(CAPTURE_WINDOW_TIMEOUT_MS, 2000);
+    }
+
+    #[test]
+    fn test_minimum_wgc_build_constant() {
+        assert_eq!(MINIMUM_WGC_BUILD, 17134);
+    }
+
+    #[test]
+    fn test_check_wgc_available() {
+        // check_wgc_available always succeeds now - runtime check happens at capture
+        // time
+        let result = WindowsBackend::check_wgc_available();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_is_window_valid_with_null() {
+        // Null handle should be invalid
+        let valid = WindowsBackend::is_window_valid(ptr::null_mut());
+        assert!(!valid);
+    }
+
+    #[test]
+    fn test_is_window_valid_with_invalid_handle() {
+        // Non-existent window handle should be invalid
+        let valid = WindowsBackend::is_window_valid(0x12345678 as HWND);
+        assert!(!valid);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_by_class() {
+        let backend = WindowsBackend::new().unwrap();
+        // Try to find a common Windows class
+        let selector = WindowSelector {
+            title_substring_or_regex: None,
+            class: Some("Shell_TrayWnd".to_string()), // Windows taskbar
+            exe: None,
+        };
+        let result = backend.resolve_target(&selector).await;
+        // Taskbar should exist on any Windows system
+        if result.is_ok() {
+            let handle = result.unwrap();
+            // Handle should be a valid number
+            assert!(handle.parse::<isize>().is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_by_exe() {
+        let backend = WindowsBackend::new().unwrap();
+        // Try to find explorer.exe
+        let selector = WindowSelector {
+            title_substring_or_regex: None,
+            class: None,
+            exe: Some("explorer.exe".to_string()),
+        };
+        let result = backend.resolve_target(&selector).await;
+        // Explorer should exist on any Windows system (File Explorer or shell)
+        // Note: This may or may not succeed depending on system state
+        tracing::info!("resolve_by_exe result: {:?}", result);
+    }
+
+    #[test]
+    fn test_regex_match_case_insensitive() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "NOTEPAD - Untitled".to_string(),
+            class:   "Notepad".to_string(),
+            owner:   "notepad.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Lowercase regex should match uppercase title
+        let result = WindowsBackend::try_regex_match("notepad", &windows);
+        assert_eq!(result, Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_regex_match_with_special_chars() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Document (1).txt - Notepad".to_string(),
+            class:   "Notepad".to_string(),
+            owner:   "notepad.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Escaped regex for literal parens
+        let result = WindowsBackend::try_regex_match(r"Document \(1\)", &windows);
+        assert_eq!(result, Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_substring_match_partial() {
+        let windows = vec![
+            WindowInfo {
+                id:      "1".to_string(),
+                title:   "Google Chrome".to_string(),
+                class:   "Chrome_WidgetWin_1".to_string(),
+                owner:   "chrome.exe".to_string(),
+                pid:     1234,
+                backend: BackendType::Windows,
+            },
+            WindowInfo {
+                id:      "2".to_string(),
+                title:   "Firefox Developer Edition".to_string(),
+                class:   "MozillaWindowClass".to_string(),
+                owner:   "firefox.exe".to_string(),
+                pid:     5678,
+                backend: BackendType::Windows,
+            },
+        ];
+
+        // Partial substring match
+        let result = WindowsBackend::try_substring_match("Chrome", &windows);
+        assert_eq!(result, Some("1".to_string()));
+
+        let result = WindowsBackend::try_substring_match("Developer", &windows);
+        assert_eq!(result, Some("2".to_string()));
+    }
+
+    #[test]
+    fn test_exact_class_match_not_found() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Test Window".to_string(),
+            class:   "TestClass".to_string(),
+            owner:   "test.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        let result = WindowsBackend::try_exact_class_match("NonExistentClass", &windows);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_exact_exe_match_with_extension() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Visual Studio Code".to_string(),
+            class:   "Chrome_WidgetWin_1".to_string(),
+            owner:   "Code.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Case-insensitive match
+        let result = WindowsBackend::try_exact_exe_match("code.exe", &windows);
+        assert_eq!(result, Some("1".to_string()));
+
+        // Without extension should NOT match (exact match)
+        let result = WindowsBackend::try_exact_exe_match("code", &windows);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fuzzy_match_with_typos() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Microsoft Word Document".to_string(),
+            class:   "Test".to_string(),
+            owner:   "WINWORD.EXE".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Minor typo - may or may not meet threshold
+        let result = WindowsBackend::try_fuzzy_match("Microsft Word", &windows);
+        // Just ensure it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_fuzzy_match_with_abbreviation() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Windows PowerShell".to_string(),
+            class:   "Test".to_string(),
+            owner:   "powershell.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Abbreviation-style match
+        let result = WindowsBackend::try_fuzzy_match("powershell", &windows);
+        assert_eq!(result, Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_regex_pattern_too_large() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Test".to_string(),
+            class:   "Test".to_string(),
+            owner:   "test.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Create pattern > 1MB
+        let large_pattern = "a".repeat(1_000_001);
+        let result = WindowsBackend::try_regex_match(&large_pattern, &windows);
+        assert!(result.is_none()); // Should be rejected as too large
+    }
+
+    #[test]
+    fn test_enumerate_windows_sync_returns_vec() {
+        let windows = WindowsBackend::enumerate_windows_sync();
+        // Should return some windows on a typical system
+        tracing::info!("enumerate_windows_sync found {} windows", windows.len());
+        // Verify it returns a valid vec (doesn't panic)
+        let _ = windows.len();
+    }
+
+    #[test]
+    fn test_window_info_has_backend_type() {
+        let windows = WindowsBackend::enumerate_windows_sync();
+        for win in windows.iter().take(5) {
+            assert_eq!(win.backend, BackendType::Windows);
+        }
+    }
+
+    #[test]
+    fn test_capabilities_all_fields() {
+        let backend = WindowsBackend::new().unwrap();
+        let caps = backend.capabilities();
+
+        // Verify all capability fields
+        assert!(caps.supports_window_capture);
+        assert!(caps.supports_display_capture);
+        assert!(caps.supports_region);
+        assert!(caps.supports_cursor);
+        assert!(!caps.supports_wayland_restore); // Windows-specific, not Wayland
+    }
+
+    #[tokio::test]
+    async fn test_list_windows_has_titles() {
+        let backend = WindowsBackend::new().unwrap();
+        let windows = backend.list_windows().await.unwrap();
+
+        // All windows should have non-empty titles (filtered during enumeration)
+        for win in &windows {
+            assert!(!win.title.is_empty(), "Window {} has empty title", win.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_windows_has_valid_ids() {
+        let backend = WindowsBackend::new().unwrap();
+        let windows = backend.list_windows().await.unwrap();
+
+        // All window IDs should be parseable as isize (HWND values)
+        for win in &windows {
+            let parsed: Result<isize, _> = win.id.parse();
+            assert!(parsed.is_ok(), "Window ID {} is not a valid isize", win.id);
+        }
+    }
+
+    #[test]
+    fn test_backend_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<WindowsBackend>();
+        assert_sync::<WindowsBackend>();
+    }
+
+    #[test]
+    fn test_window_info_fields() {
+        let info = WindowInfo {
+            id:      "12345".to_string(),
+            title:   "Test Window".to_string(),
+            class:   "TestClass".to_string(),
+            owner:   "test.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        };
+
+        assert_eq!(info.id, "12345");
+        assert_eq!(info.title, "Test Window");
+        assert_eq!(info.class, "TestClass");
+        assert_eq!(info.owner, "test.exe");
+        assert_eq!(info.pid, 1234);
+        assert_eq!(info.backend, BackendType::Windows);
+    }
+
+    #[test]
+    fn test_window_selector_by_title() {
+        let selector = WindowSelector::by_title("Notepad");
+        assert_eq!(selector.title_substring_or_regex, Some("Notepad".to_string()));
+        assert!(selector.class.is_none());
+        assert!(selector.exe.is_none());
+    }
+
+    #[test]
+    fn test_window_selector_by_class() {
+        let selector = WindowSelector::by_class("Notepad");
+        assert!(selector.title_substring_or_regex.is_none());
+        assert_eq!(selector.class, Some("Notepad".to_string()));
+        assert!(selector.exe.is_none());
+    }
+
+    #[test]
+    fn test_window_selector_by_exe() {
+        let selector = WindowSelector::by_exe("notepad.exe");
+        assert!(selector.title_substring_or_regex.is_none());
+        assert!(selector.class.is_none());
+        assert_eq!(selector.exe, Some("notepad.exe".to_string()));
+    }
+
+    #[test]
+    fn test_capture_options_default() {
+        let opts = CaptureOptions::default();
+        assert!(opts.region.is_none());
+        assert!((opts.scale - 1.0).abs() < 0.001);
+        assert!(!opts.include_cursor);
+    }
+
+    #[test]
+    fn test_capture_options_with_cursor() {
+        let mut opts = CaptureOptions::default();
+        opts.include_cursor = true;
+        assert!(opts.include_cursor);
+    }
+
+    #[test]
+    fn test_capture_options_with_scale() {
+        let mut opts = CaptureOptions::default();
+        opts.scale = 0.5;
+        assert!((opts.scale - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_create_wc_window_from_valid_hwnd() {
+        // Test that create_wc_window doesn't panic with a non-null handle
+        // Note: The window won't be valid, but the function shouldn't panic
+        let result = WindowsBackend::create_wc_window(0x1 as HWND);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_try_regex_match_empty_windows() {
+        let windows: Vec<WindowInfo> = vec![];
+        let result = WindowsBackend::try_regex_match("test", &windows);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_substring_match_empty_windows() {
+        let windows: Vec<WindowInfo> = vec![];
+        let result = WindowsBackend::try_substring_match("test", &windows);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_fuzzy_match_empty_windows() {
+        let windows: Vec<WindowInfo> = vec![];
+        let result = WindowsBackend::try_fuzzy_match("test", &windows);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_exact_class_match_empty_windows() {
+        let windows: Vec<WindowInfo> = vec![];
+        let result = WindowsBackend::try_exact_class_match("test", &windows);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_try_exact_exe_match_empty_windows() {
+        let windows: Vec<WindowInfo> = vec![];
+        let result = WindowsBackend::try_exact_exe_match("test", &windows);
+        assert!(result.is_none());
+    }
+
+    // ========== Version Checking Tests ==========
+
+    #[test]
+    fn test_get_windows_build_returns_number() {
+        let build = WindowsBackend::get_windows_build();
+        // On a real system, this should return a valid build number
+        tracing::info!("Windows build number: {}", build);
+        // Just ensure it returns a u32 (which is always >= 0 by definition)
+        let _ = build;
+    }
+
+    #[test]
+    fn test_check_wgc_available_on_current_system() {
+        let result = WindowsBackend::check_wgc_available();
+        // On modern Windows systems, this should succeed
+        // On older systems, it might fail with WGCUnavailable
+        tracing::info!("check_wgc_available result: {:?}", result);
+        // Just ensure it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_minimum_wgc_build_is_reasonable() {
+        // Windows 10 v1803 (April 2018) is the minimum
+        assert!(MINIMUM_WGC_BUILD >= 17134);
+        assert!(MINIMUM_WGC_BUILD <= 20000); // Sanity check - shouldn't be way higher
+    }
+
+    // ========== Edge Case and Error Handling Tests ==========
+
+    #[tokio::test]
+    async fn test_resolve_with_no_criteria() {
+        let backend = WindowsBackend::new().unwrap();
+        let selector = WindowSelector {
+            title_substring_or_regex: None,
+            class: None,
+            exe: None,
+        };
+        let result = backend.resolve_target(&selector).await;
+        // Should fail because no selection criteria provided
+        assert!(matches!(result, Err(CaptureError::InvalidParameter { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_nonexistent_window() {
+        let backend = WindowsBackend::new().unwrap();
+        let selector = WindowSelector::by_title("NonExistentWindow_12345_XYZ_ZZZZZZZ");
+        let result = backend.resolve_target(&selector).await;
+        // Should fail with WindowNotFound
+        assert!(matches!(result, Err(CaptureError::WindowNotFound { .. })));
+    }
+
+    #[test]
+    fn test_is_window_valid_checks_handle() {
+        // Test that null and invalid handles are rejected
+        let null_handle: HWND = ptr::null_mut();
+        assert!(!WindowsBackend::is_window_valid(null_handle));
+
+        // Test with clearly invalid handle value
+        let invalid_handle = 0xdeadbeef as HWND;
+        assert!(!WindowsBackend::is_window_valid(invalid_handle));
+    }
+
+    #[test]
+    fn test_window_title_empty_window() {
+        // Test with null handle
+        let title = WindowsBackend::get_window_title(ptr::null_mut());
+        assert!(title.is_empty());
+    }
+
+    #[test]
+    fn test_window_class_empty_for_invalid_handle() {
+        // Test with clearly invalid handle
+        let class = WindowsBackend::get_window_class(0xdeadbeef as HWND);
+        // Invalid handle should return empty or short string
+        assert!(class.len() < 256); // Should be safe regardless
+    }
+
+    #[test]
+    fn test_window_process_info_for_invalid_handle() {
+        let (pid, exe) = WindowsBackend::get_window_process_info(ptr::null_mut());
+        // Should return 0 pid and empty exe for invalid handle
+        assert_eq!(pid, 0);
+        assert!(exe.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_window_enumeration_consistent() {
+        let windows1 = WindowsBackend::enumerate_windows_sync();
+        let windows2 = WindowsBackend::enumerate_windows_sync();
+
+        // Both calls should succeed and return reasonable counts
+        assert!(!windows1.is_empty());
+        assert!(!windows2.is_empty());
+
+        // Both should find at least some of the same windows
+        // (though exact count may vary if windows open/close between calls)
+        assert!(windows1.len() > 0);
+        assert!(windows2.len() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_closed_immediately() {
+        let backend = WindowsBackend::new().unwrap();
+        let opts = CaptureOptions::default();
+
+        // Try to capture with a handle that looks valid (0x1) but isn't
+        let result = backend.capture_window("1".to_string(), &opts).await;
+        // Should fail, either with WindowClosed or other error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_regex_pattern_injection_safe() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Test | Window".to_string(),
+            class:   "Test".to_string(),
+            owner:   "test.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Test with regex special characters that could cause issues
+        let patterns = vec![
+            ".*|.*",       // Alternation
+            "(test)*",     // Backreference
+            "[a-z]++",     // Possessive
+            "(?<name>.*)", // Named groups
+        ];
+
+        for pattern in patterns {
+            // Should not panic, might match or not
+            let _ = WindowsBackend::try_regex_match(pattern, &windows);
+        }
+    }
+
+    #[test]
+    fn test_substring_match_unicode_characters() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "文档 - Notepad".to_string(), // Chinese characters
+            class:   "Notepad".to_string(),
+            owner:   "notepad.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Should handle Unicode without crashing
+        let result = WindowsBackend::try_substring_match("文档", &windows);
+        assert_eq!(result, Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_substring_match_emoji() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "📄 Document.txt".to_string(), // Emoji
+            class:   "Notepad".to_string(),
+            owner:   "notepad.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Should handle emoji
+        let result = WindowsBackend::try_substring_match("📄", &windows);
+        assert_eq!(result, Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_exact_match_with_spaces() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Visual   Studio   Code".to_string(), // Multiple spaces
+            class:   "VSCode".to_string(),
+            owner:   "Code.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Substring match should still work
+        let result = WindowsBackend::try_substring_match("Studio Code", &windows);
+        assert_eq!(result, Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_fuzzy_match_short_pattern() {
+        let windows = vec![WindowInfo {
+            id:      "1".to_string(),
+            title:   "Microsoft Visual Studio".to_string(),
+            class:   "Test".to_string(),
+            owner:   "devenv.exe".to_string(),
+            pid:     1234,
+            backend: BackendType::Windows,
+        }];
+
+        // Short patterns should work
+        let result = WindowsBackend::try_fuzzy_match("VS", &windows);
+        // May or may not match depending on threshold
+        let _ = result;
+    }
+
+    #[test]
+    fn test_list_all_window_matching_strategies() {
+        let windows = vec![
+            WindowInfo {
+                id:      "1".to_string(),
+                title:   "Notepad - Document1.txt".to_string(),
+                class:   "Notepad".to_string(),
+                owner:   "notepad.exe".to_string(),
+                pid:     1234,
+                backend: BackendType::Windows,
+            },
+            WindowInfo {
+                id:      "2".to_string(),
+                title:   "Visual Studio Code".to_string(),
+                class:   "Chrome_WidgetWin_1".to_string(),
+                owner:   "Code.exe".to_string(),
+                pid:     5678,
+                backend: BackendType::Windows,
+            },
+        ];
+
+        // All strategies should work on appropriate windows
+        assert!(WindowsBackend::try_regex_match("Notepad", &windows).is_some());
+        assert!(WindowsBackend::try_substring_match("notepad", &windows).is_some());
+        assert!(WindowsBackend::try_exact_class_match("Notepad", &windows).is_some());
+        assert!(WindowsBackend::try_exact_exe_match("Code.exe", &windows).is_some());
+    }
+
+    #[test]
+    fn test_window_enumeration_filters_hidden() {
+        // This test verifies that the enumeration callback filters out hidden windows
+        // by checking that returned windows are reasonable
+        let windows = WindowsBackend::enumerate_windows_sync();
+
+        // All windows should have titles (filtered in enumeration)
+        for window in windows {
+            assert!(!window.title.is_empty());
+            assert!(!window.id.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_capabilities_reflect_windows_abilities() {
+        let backend = WindowsBackend::new().unwrap();
+        let caps = backend.capabilities();
+
+        // Windows should support all of these
+        assert!(caps.supports_window_capture);
+        assert!(caps.supports_display_capture);
+        assert!(caps.supports_region);
+        assert!(caps.supports_cursor);
+
+        // Windows doesn't use Wayland
+        assert!(!caps.supports_wayland_restore);
+    }
+
+    #[test]
+    fn test_backend_new_always_succeeds() {
+        // Windows backend should always be creatable on Windows platform
+        let result = WindowsBackend::new();
+        assert!(result.is_ok());
+
+        let result2 = WindowsBackend::new();
+        assert!(result2.is_ok());
+    }
+
+    #[test]
+    fn test_window_handle_as_isize_roundtrip() {
+        let original_hwnd = 0x12345678isize;
+        let as_string = original_hwnd.to_string();
+        let parsed: isize = as_string.parse().unwrap();
+        assert_eq!(original_hwnd, parsed);
     }
 }

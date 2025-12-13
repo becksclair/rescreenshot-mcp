@@ -49,7 +49,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 #[cfg(feature = "linux-x11")]
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 #[cfg(feature = "linux-x11")]
 use regex::RegexBuilder;
 use x11rb::{

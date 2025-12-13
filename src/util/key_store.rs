@@ -47,8 +47,8 @@ use std::{
 
 #[cfg(feature = "linux-wayland")]
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
     ChaCha20Poly1305,
+    aead::{Aead, KeyInit},
 };
 #[cfg(feature = "linux-wayland")]
 use hkdf::Hkdf;
@@ -971,10 +971,12 @@ mod tests {
         let store = KeyStore::new();
 
         // Ensure clean baseline
-        assert!(!store
-            .list_source_ids()
-            .unwrap()
-            .contains(&"list-test-1".to_string()));
+        assert!(
+            !store
+                .list_source_ids()
+                .unwrap()
+                .contains(&"list-test-1".to_string())
+        );
 
         store.store_token("list-test-1", "token1").unwrap();
         store.store_token("list-test-2", "token2").unwrap();
