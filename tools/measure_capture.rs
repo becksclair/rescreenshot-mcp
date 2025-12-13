@@ -26,8 +26,20 @@
 //!
 //! JSON to stdout, exit code 0 if all thresholds met, 1 otherwise.
 
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("measure-capture is only supported on Linux (Wayland).");
+    eprintln!(
+        "Run on Linux with: cargo run --bin measure-capture --features perf-tests,linux-wayland \
+         -- summary"
+    );
+    std::process::exit(2);
+}
+
+#[cfg(target_os = "linux")]
 use std::{process, sync::Arc, time::Duration};
 
+#[cfg(target_os = "linux")]
 use screenshot_mcp::{
     capture::{CaptureFacade, wayland_backend::WaylandBackend},
     model::{CaptureOptions, SourceType},
@@ -35,6 +47,7 @@ use screenshot_mcp::{
     util::key_store::KeyStore,
 };
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, serde::Serialize)]
 struct MeasurementOutput {
     operation:     String,
@@ -44,6 +57,7 @@ struct MeasurementOutput {
     threshold_met: Option<bool>,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, serde::Serialize)]
 struct BatchOutput {
     operation:      String,
@@ -59,6 +73,7 @@ struct BatchOutput {
     threshold_met:  Option<bool>,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, serde::Serialize)]
 struct SummaryOutput {
     status:     String,
@@ -66,6 +81,7 @@ struct SummaryOutput {
     message:    String,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, serde::Serialize)]
 struct ThresholdsReport {
     prime_consent_max_s:   f64,
@@ -74,6 +90,7 @@ struct ThresholdsReport {
     memory_peak_max_mb:    usize,
 }
 
+#[cfg(target_os = "linux")]
 impl From<&PerformanceThresholds> for ThresholdsReport {
     fn from(thresholds: &PerformanceThresholds) -> Self {
         Self {
@@ -85,6 +102,7 @@ impl From<&PerformanceThresholds> for ThresholdsReport {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn calculate_percentile(sorted_durations: &[Duration], percentile: f64) -> Duration {
     if sorted_durations.is_empty() {
         return Duration::ZERO;
@@ -95,6 +113,7 @@ fn calculate_percentile(sorted_durations: &[Duration], percentile: f64) -> Durat
     sorted_durations[index]
 }
 
+#[cfg(target_os = "linux")]
 fn print_usage() {
     eprintln!("measure-capture - Wayland performance measurement tool");
     eprintln!();
@@ -122,6 +141,7 @@ fn print_usage() {
     eprintln!("    Exit code 0 if thresholds met, 1 otherwise");
 }
 
+#[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() {
     // Initialize tracing for debugging (optional)
@@ -188,6 +208,7 @@ async fn main() {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn run_prime_consent(source_id: &str) {
     let key_store = Arc::new(KeyStore::new());
     let backend = WaylandBackend::new(key_store);
@@ -251,6 +272,7 @@ async fn run_prime_consent(source_id: &str) {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn run_headless_batch(source_id: &str, num_captures: usize) {
     let key_store = Arc::new(KeyStore::new());
     let backend = WaylandBackend::new(Arc::clone(&key_store));
@@ -352,6 +374,7 @@ async fn run_headless_batch(source_id: &str, num_captures: usize) {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn run_token_rotation(source_id: &str, num_rotations: usize) {
     let key_store = Arc::new(KeyStore::new());
     let thresholds = PerformanceThresholds::default();
@@ -450,6 +473,7 @@ async fn run_token_rotation(source_id: &str, num_rotations: usize) {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn run_summary() {
     let thresholds = PerformanceThresholds::default();
 

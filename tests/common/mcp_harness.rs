@@ -6,29 +6,28 @@
 //! # Usage
 //!
 //! ```rust
-//! use common::mcp_harness::{McpTestContext, ContentValidator};
+//! use common::mcp_harness::{ContentValidator, McpTestContext};
 //!
 //! #[tokio::test]
 //! async fn test_capture() {
 //!     let ctx = McpTestContext::new_with_mock();
 //!     let result = ctx.capture_window_by_title("Firefox").await.unwrap();
 //!     let parts = ContentValidator::validate_capture_result(&result).unwrap();
-//!     assert!(parts.image_bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47])); // PNG
+//!     assert!(parts.image_bytes.starts_with(&[0x89, 0x50, 0x4e, 0x47])); // PNG
 //! }
 //! ```
 
 use std::sync::Arc;
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use rmcp::model::CallToolResult;
+#[cfg(feature = "windows-backend")]
+use screenshot_mcp::capture::WindowsBackend;
 use screenshot_mcp::{
     capture::{CaptureFacade, MockBackend},
     mcp::{CaptureWindowParams, ScreenshotMcpServer},
     util::temp_files::TempFileManager,
 };
-
-#[cfg(feature = "windows-backend")]
-use screenshot_mcp::capture::WindowsBackend;
 
 /// Test fixture for MCP server integration tests
 ///
@@ -37,12 +36,12 @@ use screenshot_mcp::capture::WindowsBackend;
 /// and live testing with WindowsBackend.
 pub struct McpTestContext {
     /// The MCP server instance
-    pub server: ScreenshotMcpServer,
+    pub server:     ScreenshotMcpServer,
     /// Shared temp file manager for cleanup tracking
     pub temp_files: Arc<TempFileManager>,
     /// Backend used by the server (for inspection if needed)
     #[allow(dead_code)]
-    backend: Arc<dyn CaptureFacade>,
+    backend:        Arc<dyn CaptureFacade>,
 }
 
 impl McpTestContext {
@@ -69,8 +68,9 @@ impl McpTestContext {
     /// # Examples
     ///
     /// ```rust
-    /// use screenshot_mcp::{capture::MockBackend, error::CaptureError, model::BackendType};
     /// use std::time::Duration;
+    ///
+    /// use screenshot_mcp::{capture::MockBackend, error::CaptureError, model::BackendType};
     ///
     /// // With delay
     /// let mock = MockBackend::new().with_delay(Duration::from_millis(100));
@@ -79,7 +79,7 @@ impl McpTestContext {
     /// // With error injection
     /// let mock = MockBackend::new().with_error(CaptureError::PermissionDenied {
     ///     platform: "test".to_string(),
-    ///     backend: BackendType::None,
+    ///     backend:  BackendType::None,
     /// });
     /// let ctx = McpTestContext::new_with_configured_mock(mock);
     /// ```
@@ -96,11 +96,13 @@ impl McpTestContext {
 
     /// Create test context with WindowsBackend for live testing
     ///
-    /// Requires `windows-backend` feature and a real Windows desktop environment.
-    /// Use `#[ignore]` attribute on tests using this constructor.
+    /// Requires `windows-backend` feature and a real Windows desktop
+    /// environment. Use `#[ignore]` attribute on tests using this
+    /// constructor.
     ///
     /// # Panics
-    /// Panics if WindowsBackend initialization fails (e.g., unsupported Windows version)
+    /// Panics if WindowsBackend initialization fails (e.g., unsupported Windows
+    /// version)
     #[cfg(feature = "windows-backend")]
     pub fn new_with_windows_backend() -> Self {
         let backend: Arc<dyn CaptureFacade> = Arc::new(
@@ -209,9 +211,9 @@ pub struct CaptureResultParts {
     /// Decoded PNG/JPEG/WebP image bytes
     pub image_bytes: Vec<u8>,
     /// file:// URI extracted from resource link
-    pub file_uri: String,
+    pub file_uri:    String,
     /// Parsed metadata JSON
-    pub metadata: serde_json::Value,
+    pub metadata:    serde_json::Value,
 }
 
 /// Validation utilities for MCP tool responses
@@ -257,7 +259,10 @@ impl ContentValidator {
     /// - `Ok(String)` - the file:// URI
     /// - `Err(String)` - description of what failed
     pub fn validate_file_uri(result: &CallToolResult) -> Result<String, String> {
-        let resource_content = result.content.get(1).ok_or("Missing resource link content")?;
+        let resource_content = result
+            .content
+            .get(1)
+            .ok_or("Missing resource link content")?;
 
         let text = resource_content
             .as_text()
@@ -346,9 +351,7 @@ impl ContentValidator {
         }
 
         if let Some(fmt) = expected_format {
-            let actual_fmt = metadata["format"]
-                .as_str()
-                .ok_or("Missing format field")?;
+            let actual_fmt = metadata["format"].as_str().ok_or("Missing format field")?;
             if actual_fmt != fmt {
                 return Err(format!("Expected format '{}', got '{}'", fmt, actual_fmt));
             }
@@ -370,10 +373,7 @@ impl ContentValidator {
     pub fn validate_capture_result(result: &CallToolResult) -> Result<CaptureResultParts, String> {
         // Must have 3 content items
         if result.content.len() != 3 {
-            return Err(format!(
-                "Expected 3 content items, got {}",
-                result.content.len()
-            ));
+            return Err(format!("Expected 3 content items, got {}", result.content.len()));
         }
 
         // Must not be an error
@@ -396,7 +396,7 @@ impl ContentValidator {
     ///
     /// PNG files start with: 0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A
     pub fn is_valid_png(bytes: &[u8]) -> bool {
-        bytes.len() >= 8 && bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        bytes.len() >= 8 && bytes.starts_with(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     }
 }
 
@@ -408,8 +408,8 @@ impl ContentValidator {
 #[derive(Debug, serde::Deserialize)]
 pub struct HealthCheckParsed {
     pub platform: String,
-    pub backend: String,
-    pub ok: bool,
+    pub backend:  String,
+    pub ok:       bool,
 }
 
 /// Parse health_check tool response
@@ -428,9 +428,7 @@ pub fn parse_health_check(result: &CallToolResult) -> Result<HealthCheckParsed, 
 // ============================================================================
 
 /// Parse list_windows tool response
-pub fn parse_window_list(
-    result: &CallToolResult,
-) -> Result<Vec<serde_json::Value>, String> {
+pub fn parse_window_list(result: &CallToolResult) -> Result<Vec<serde_json::Value>, String> {
     let text = result
         .content
         .first()

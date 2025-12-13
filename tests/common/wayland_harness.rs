@@ -7,7 +7,7 @@
 //! - Environment validation
 //! - Assertion helpers
 
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,19 +16,19 @@ use std::time::Duration;
 // "perf-tests", test))]
 #[cfg(any(feature = "perf-tests", test))]
 pub use screenshot_mcp::perf::{PerformanceThresholds, measure_operation, print_timing_result};
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use screenshot_mcp::{
     capture::wayland_backend::WaylandBackend, model::CaptureOptions, util::key_store::KeyStore,
 };
 
 /// Creates a WaylandBackend with a shared KeyStore for testing token operations
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 pub fn create_test_backend_with_store(key_store: Arc<KeyStore>) -> WaylandBackend {
     WaylandBackend::new(key_store)
 }
 
 /// Prints test environment information
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 pub fn print_test_environment() {
     eprintln!("=== Wayland Test Environment ===");
     eprintln!(
@@ -74,7 +74,7 @@ pub fn assert_duration_above(actual: Duration, minimum: Duration, operation: &st
 }
 
 /// Cleans up test tokens from KeyStore
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 pub fn cleanup_test_tokens(key_store: &KeyStore, source_ids: &[&str]) {
     for source_id in source_ids {
         if let Err(e) = key_store.delete_token(source_id) {
@@ -84,7 +84,7 @@ pub fn cleanup_test_tokens(key_store: &KeyStore, source_ids: &[&str]) {
 }
 
 /// Stores a test token and returns cleanup function
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 pub fn setup_test_token(
     key_store: &KeyStore,
     source_id: &str,
@@ -94,7 +94,7 @@ pub fn setup_test_token(
 }
 
 /// Verifies token exists in KeyStore
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 pub fn assert_token_exists(key_store: &KeyStore, source_id: &str) {
     assert!(
         key_store
@@ -106,7 +106,7 @@ pub fn assert_token_exists(key_store: &KeyStore, source_id: &str) {
 }
 
 /// Creates default capture options for testing
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 pub fn default_test_capture_options() -> CaptureOptions {
     CaptureOptions::default()
 }

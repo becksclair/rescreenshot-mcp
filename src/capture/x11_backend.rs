@@ -201,9 +201,47 @@ impl X11Backend {
         })
     }
 
+    /// Maps xcap errors to CaptureError with remediation hints.
+    ///
+    /// Provides user-friendly error messages with actionable next steps for
+    /// common xcap failure scenarios.
+    #[cfg(feature = "linux-x11")]
+    fn map_xcap_error(&self, e: xcap::XcapError) -> CaptureError {
+        let err_str = e.to_string().to_lowercase();
+
+        // Permission denied - possibly running in restricted environment
+        if err_str.contains("permission denied") || err_str.contains("access denied") {
+            tracing::warn!("xcap permission denied - check X11 security restrictions");
+            return CaptureError::BackendNotAvailable {
+                backend: BackendType::X11,
+            };
+        }
+
+        // Display connection failed
+        if err_str.contains("display") || err_str.contains("connection") {
+            tracing::warn!("xcap failed to connect to X11 display - verify DISPLAY is set");
+            return CaptureError::BackendNotAvailable {
+                backend: BackendType::X11,
+            };
+        }
+
+        // Window not found (specific to capture_window)
+        if err_str.contains("not found") || err_str.contains("destroyed") {
+            return CaptureError::BackendNotAvailable {
+                backend: BackendType::X11,
+            };
+        }
+
+        // Generic fallback
+        tracing::error!("xcap error: {}", e);
+        CaptureError::BackendNotAvailable {
+            backend: BackendType::X11,
+        }
+    }
+
     /// Gets or creates a shared X11 connection
     ///
-    /// This method implements lazy initialization with reconnect-on-error:
+    /// This method implements lazy initialization with reconnect-on-error:     
     /// 1. If connection exists and is valid, return reference to it
     /// 2. If connection doesn't exist, create and cache it
     /// 3. If operation fails, clear cached connection to force reconnect on
@@ -1388,51 +1426,6 @@ impl CaptureFacade for X11Backend {
         })
     }
 
-    /// Maps xcap errors to CaptureError with remediation hints
-    ///
-    /// Provides user-friendly error messages with actionable next steps
-    /// for common xcap failure scenarios.
-    ///
-    /// # Arguments
-    ///
-    /// - `e` - xcap error object
-    ///
-    /// # Returns
-    ///
-    /// Mapped CaptureError with remediation text
-    fn map_xcap_error(&self, e: xcap::XcapError) -> CaptureError {
-        let err_str = e.to_string().to_lowercase();
-
-        // Permission denied - possibly running in restricted environment
-        if err_str.contains("permission denied") || err_str.contains("access denied") {
-            tracing::warn!("xcap permission denied - check X11 security restrictions");
-            return CaptureError::BackendNotAvailable {
-                backend: BackendType::X11,
-            };
-        }
-
-        // Display connection failed
-        if err_str.contains("display") || err_str.contains("connection") {
-            tracing::warn!("xcap failed to connect to X11 display - verify DISPLAY is set");
-            return CaptureError::BackendNotAvailable {
-                backend: BackendType::X11,
-            };
-        }
-
-        // Window not found (specific to capture_window)
-        if err_str.contains("not found") || err_str.contains("destroyed") {
-            return CaptureError::BackendNotAvailable {
-                backend: BackendType::X11,
-            };
-        }
-
-        // Generic fallback
-        tracing::error!("xcap error: {}", e);
-        CaptureError::BackendNotAvailable {
-            backend: BackendType::X11,
-        }
-    }
-
     /// Returns the capabilities of this X11 backend
     ///
     /// X11 backends support:
@@ -1464,7 +1457,9 @@ mod tests {
     fn test_x11_backend_new_without_display() {
         // Temporarily unset DISPLAY
         let original = std::env::var("DISPLAY").ok();
-        std::env::remove_var("DISPLAY");
+        unsafe {
+            std::env::remove_var("DISPLAY");
+        }
 
         let result = X11Backend::new();
         assert!(result.is_err());
@@ -1472,7 +1467,9 @@ mod tests {
 
         // Restore DISPLAY
         if let Some(val) = original {
-            std::env::set_var("DISPLAY", val);
+            unsafe {
+                std::env::set_var("DISPLAY", val);
+            }
         }
     }
 
@@ -1951,21 +1948,29 @@ mod tests {
 
         // With DISPLAY set
         if original.is_some() {
-            std::env::set_var("DISPLAY", ":0");
+            unsafe {
+                std::env::set_var("DISPLAY", ":0");
+            }
             let result = X11Backend::new();
             assert!(result.is_ok(), "Backend should work with DISPLAY=:0");
         }
 
         // Without DISPLAY
-        std::env::remove_var("DISPLAY");
+        unsafe {
+            std::env::remove_var("DISPLAY");
+        }
         let result = X11Backend::new();
         assert!(result.is_err(), "Backend should fail without DISPLAY set");
 
         // Restore original
         if let Some(val) = original {
-            std::env::set_var("DISPLAY", val);
+            unsafe {
+                std::env::set_var("DISPLAY", val);
+            }
         } else {
-            std::env::remove_var("DISPLAY");
+            unsafe {
+                std::env::remove_var("DISPLAY");
+            }
         }
     }
 
@@ -2140,7 +2145,7 @@ mod tests {
             assert!(result1.is_some(), "Exact fuzzy match should succeed");
 
             // Partial match
-            let result2 = backend.try_fuzzy_match("VeryLong", &windows);
+            let _result2 = backend.try_fuzzy_match("VeryLong", &windows);
             // May or may not match depending on threshold
 
             // Very poor match (should fail threshold)

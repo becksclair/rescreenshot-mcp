@@ -40,14 +40,13 @@
 
 mod common;
 
-use screenshot_mcp::{
-    capture::{windows_backend::WindowsBackend, CaptureFacade},
-    model::{CaptureOptions, Region, WindowSelector},
-};
-
 // Import common helpers
 use common::windows_helpers::{
-    measure_timing, save_test_image, validate_image_pixels, WindowsTestContext,
+    WindowsTestContext, measure_timing, save_test_image, validate_image_pixels,
+};
+use screenshot_mcp::{
+    capture::{CaptureFacade, windows_backend::WindowsBackend},
+    model::{CaptureOptions, Region, WindowSelector},
 };
 
 /// Test that we can enumerate windows on the system
@@ -588,8 +587,10 @@ async fn test_capture_window_with_cursor() {
         .expect("Failed to list windows");
     let target_win = windows.first().expect("Should have at least one window");
 
-    let mut opts = CaptureOptions::default();
-    opts.include_cursor = true;
+    let opts = CaptureOptions {
+        include_cursor: true,
+        ..Default::default()
+    };
 
     let (image, elapsed) = measure_timing("capture_window_with_cursor", || {
         futures::executor::block_on(backend.capture_window(target_win.id.clone(), &opts))
@@ -694,7 +695,8 @@ async fn test_capabilities_report() {
 // These tests save screenshots to test_output/ for AI visual analysis
 // Helper functions are in common::windows_helpers module
 
-/// Visual test: Capture a target window (Cursor preferred) and save for verification
+/// Visual test: Capture a target window (Cursor preferred) and save for
+/// verification
 #[tokio::test]
 #[ignore = "requires Windows desktop environment"]
 async fn test_visual_capture_target_window() {
@@ -742,10 +744,7 @@ async fn test_visual_capture_display() {
     println!("Display size: {}x{} pixels", width, height);
 
     // Validate
-    assert!(
-        width >= 640 && height >= 480,
-        "Display should be at least 640x480"
-    );
+    assert!(width >= 640 && height >= 480, "Display should be at least 640x480");
     validate_image_pixels(&image, "display");
 
     // Save for visual verification
@@ -767,13 +766,10 @@ async fn test_visual_capture_with_options() {
     // 1. Capture at half scale
     println!("\n--- Half Scale (0.5x) ---");
     let scaled_image = ctx
-        .capture_window(
-            &handle,
-            &CaptureOptions {
-                scale: 0.5,
-                ..Default::default()
-            },
-        )
+        .capture_window(&handle, &CaptureOptions {
+            scale: 0.5,
+            ..Default::default()
+        })
         .await
         .expect("Failed to capture scaled");
 
@@ -785,13 +781,10 @@ async fn test_visual_capture_with_options() {
     // 2. Capture with cursor
     println!("\n--- With Cursor ---");
     let cursor_image = ctx
-        .capture_window(
-            &handle,
-            &CaptureOptions {
-                include_cursor: true,
-                ..Default::default()
-            },
-        )
+        .capture_window(&handle, &CaptureOptions {
+            include_cursor: true,
+            ..Default::default()
+        })
         .await
         .expect("Failed to capture with cursor");
 
@@ -814,18 +807,15 @@ async fn test_visual_capture_with_options() {
     let region_y = (fh.saturating_sub(region_h)) / 2;
 
     let region_image = ctx
-        .capture_window(
-            &handle,
-            &CaptureOptions {
-                region: Some(Region {
-                    x:      region_x,
-                    y:      region_y,
-                    width:  region_w,
-                    height: region_h,
-                }),
-                ..Default::default()
-            },
-        )
+        .capture_window(&handle, &CaptureOptions {
+            region: Some(Region {
+                x:      region_x,
+                y:      region_y,
+                width:  region_w,
+                height: region_h,
+            }),
+            ..Default::default()
+        })
         .await
         .expect("Failed to capture region");
 

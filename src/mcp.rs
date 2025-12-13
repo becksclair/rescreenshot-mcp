@@ -14,7 +14,7 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "linux-wayland")]
+#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
 use crate::capture::WaylandBackend;
 use crate::{
     capture::{CaptureFacade, MockBackend},
@@ -70,7 +70,10 @@ fn default_source_id() -> String {
 }
 
 /// Parses a source type string to SourceType enum
-#[cfg_attr(not(feature = "linux-wayland"), allow(dead_code))]
+#[cfg_attr(
+    not(all(target_os = "linux", feature = "linux-wayland")),
+    allow(dead_code)
+)]
 fn parse_source_type(source_type_str: &str) -> Result<SourceType, String> {
     match source_type_str.to_lowercase().as_str() {
         "monitor" => Ok(SourceType::Monitor),
@@ -389,13 +392,16 @@ impl ScreenshotMcpServer {
     ///   }]
     /// }
     /// ```
-    #[cfg_attr(not(feature = "linux-wayland"), allow(unused_variables))]
+    #[cfg_attr(
+        not(all(target_os = "linux", feature = "linux-wayland")),
+        allow(unused_variables)
+    )]
     pub async fn prime_wayland_consent(
         &self,
         params: PrimeWaylandConsentParams,
     ) -> Result<CallToolResult, McpError> {
         // Implementation is only available when linux-wayland feature is enabled
-        #[cfg(feature = "linux-wayland")]
+        #[cfg(all(target_os = "linux", feature = "linux-wayland"))]
         {
             // Step 1: Downcast to WaylandBackend
             let wayland_backend = self
@@ -461,7 +467,7 @@ impl ScreenshotMcpServer {
         }
 
         // When feature is not enabled, return error
-        #[cfg(not(feature = "linux-wayland"))]
+        #[cfg(not(all(target_os = "linux", feature = "linux-wayland")))]
         {
             Err(McpError::internal_error(
                 "prime_wayland_consent requires Wayland feature. This server was not compiled \

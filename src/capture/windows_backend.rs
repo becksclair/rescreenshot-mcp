@@ -428,10 +428,17 @@ impl WindowsBackend {
 
     /// Tries to match a window by substring in title (case-insensitive)
     fn try_substring_match(substring: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
-        let lower_substring = substring.to_lowercase();
+        fn normalize_whitespace_lowercase(s: &str) -> String {
+            s.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        }
+
+        let lower_substring = normalize_whitespace_lowercase(substring);
         windows
             .iter()
-            .find(|w| w.title.to_lowercase().contains(&lower_substring))
+            .find(|w| normalize_whitespace_lowercase(&w.title).contains(&lower_substring))
             .map(|w| w.id.clone())
     }
 
@@ -1288,8 +1295,7 @@ mod tests {
         };
         let result = backend.resolve_target(&selector).await;
         // Taskbar should exist on any Windows system
-        if result.is_ok() {
-            let handle = result.unwrap();
+        if let Ok(handle) = result {
             // Handle should be a valid number
             assert!(handle.parse::<isize>().is_ok());
         }
@@ -1571,15 +1577,19 @@ mod tests {
 
     #[test]
     fn test_capture_options_with_cursor() {
-        let mut opts = CaptureOptions::default();
-        opts.include_cursor = true;
+        let opts = CaptureOptions {
+            include_cursor: true,
+            ..Default::default()
+        };
         assert!(opts.include_cursor);
     }
 
     #[test]
     fn test_capture_options_with_scale() {
-        let mut opts = CaptureOptions::default();
-        opts.scale = 0.5;
+        let opts = CaptureOptions {
+            scale: 0.5,
+            ..Default::default()
+        };
         assert!((opts.scale - 0.5).abs() < 0.001);
     }
 
@@ -1650,8 +1660,11 @@ mod tests {
     #[test]
     fn test_minimum_wgc_build_is_reasonable() {
         // Windows 10 v1803 (April 2018) is the minimum
-        assert!(MINIMUM_WGC_BUILD >= 17134);
-        assert!(MINIMUM_WGC_BUILD <= 20000); // Sanity check - shouldn't be way higher
+        const {
+            assert!(MINIMUM_WGC_BUILD >= 17134);
+            // Sanity check - shouldn't be way higher
+            assert!(MINIMUM_WGC_BUILD <= 20000);
+        };
     }
 
     // ========== Edge Case and Error Handling Tests ==========
@@ -1720,11 +1733,6 @@ mod tests {
         // Both calls should succeed and return reasonable counts
         assert!(!windows1.is_empty());
         assert!(!windows2.is_empty());
-
-        // Both should find at least some of the same windows
-        // (though exact count may vary if windows open/close between calls)
-        assert!(windows1.len() > 0);
-        assert!(windows2.len() > 0);
     }
 
     #[tokio::test]

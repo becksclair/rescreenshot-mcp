@@ -7,14 +7,15 @@
 //! - `validate_image_pixels`: Pixel content validation
 //! - `measure_async`: Async-native timing measurement
 
-#![cfg(feature = "windows-backend")]
 #![allow(dead_code)] // Helpers are available for test use, not all are always needed
 
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use screenshot_mcp::{
-    capture::{windows_backend::WindowsBackend, CaptureFacade, ImageBuffer},
+    capture::{CaptureFacade, ImageBuffer, windows_backend::WindowsBackend},
     model::{CaptureOptions, WindowInfo},
 };
 
@@ -52,11 +53,7 @@ pub fn validate_image_pixels(image: &ImageBuffer, name: &str) {
     let pixels = image.as_bytes();
 
     // Verify dimensions
-    assert!(
-        width > 0 && height > 0,
-        "Image '{}' should have non-zero dimensions",
-        name
-    );
+    assert!(width > 0 && height > 0, "Image '{}' should have non-zero dimensions", name);
 
     // Count non-zero pixels
     let non_zero = pixels.iter().filter(|&&b| b != 0).count();
@@ -153,18 +150,15 @@ pub fn find_best_target_window(windows: &[WindowInfo]) -> Option<&WindowInfo> {
 
     // Priority 5: Any window with substantial title (skip system windows)
     if let Some(w) = windows.iter().find(|w| {
-        w.title.len() > 5
-            && !w.title.starts_with("Program Manager")
-            && !w.class.contains("Shell_")
+        w.title.len() > 5 && !w.title.starts_with("Program Manager") && !w.class.contains("Shell_")
     }) {
         println!("[TARGET] Found app: '{}' ({})", w.title, w.owner);
         return Some(w);
     }
 
     // Fallback: first window
-    windows.first().map(|w| {
+    windows.first().inspect(|w| {
         println!("[TARGET] Fallback to first: '{}' ({})", w.title, w.owner);
-        w
     })
 }
 
@@ -177,11 +171,7 @@ where
     let start = Instant::now();
     let result = f().await;
     let elapsed = start.elapsed();
-    println!(
-        "[TIMING] {}: {:.2}ms",
-        name,
-        elapsed.as_secs_f64() * 1000.0
-    );
+    println!("[TIMING] {}: {:.2}ms", name, elapsed.as_secs_f64() * 1000.0);
     (result, elapsed)
 }
 
@@ -196,11 +186,7 @@ where
     let start = Instant::now();
     let result = f();
     let elapsed = start.elapsed();
-    println!(
-        "[TIMING] {}: {:.2}ms",
-        name,
-        elapsed.as_secs_f64() * 1000.0
-    );
+    println!("[TIMING] {}: {:.2}ms", name, elapsed.as_secs_f64() * 1000.0);
     (result, elapsed)
 }
 

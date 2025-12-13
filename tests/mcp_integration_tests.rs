@@ -6,7 +6,8 @@
 //! # Test Categories
 //!
 //! 1. **Headless Tests** (always run) - Use MockBackend, no display required
-//! 2. **Live Windows Tests** (`#[ignore]`) - Use WindowsBackend, require desktop
+//! 2. **Live Windows Tests** (`#[ignore]`) - Use WindowsBackend, require
+//!    desktop
 //!
 //! # Running Tests
 //!
@@ -21,7 +22,7 @@
 mod common;
 
 use common::mcp_harness::{
-    parse_health_check, parse_window_list, ContentValidator, McpTestContext,
+    ContentValidator, McpTestContext, parse_health_check, parse_window_list,
 };
 use screenshot_mcp::mcp::CaptureWindowParams;
 
@@ -34,7 +35,10 @@ use screenshot_mcp::mcp::CaptureWindowParams;
 async fn test_health_check_returns_platform_info() {
     let ctx = McpTestContext::new_with_mock();
 
-    let result = ctx.health_check().await.expect("health_check should succeed");
+    let result = ctx
+        .health_check()
+        .await
+        .expect("health_check should succeed");
     assert!(!result.is_error.unwrap_or(false), "should not be an error");
 
     let parsed = parse_health_check(&result).expect("should parse health check JSON");
@@ -58,10 +62,7 @@ async fn test_list_windows_returns_mock_data() {
     assert_eq!(windows.len(), 3, "MockBackend should return 3 windows");
 
     // Verify window titles
-    let titles: Vec<&str> = windows
-        .iter()
-        .filter_map(|w| w["title"].as_str())
-        .collect();
+    let titles: Vec<&str> = windows.iter().filter_map(|w| w["title"].as_str()).collect();
     assert!(titles.iter().any(|t| t.contains("Firefox")));
     assert!(titles.iter().any(|t| t.contains("Visual Studio Code")));
     assert!(titles.iter().any(|t| t.contains("Terminal")));
@@ -81,20 +82,11 @@ async fn test_capture_window_returns_valid_response() {
         ContentValidator::validate_capture_result(&result).expect("should have valid structure");
 
     // Verify PNG magic bytes
-    assert!(
-        ContentValidator::is_valid_png(&parts.image_bytes),
-        "image should be valid PNG"
-    );
+    assert!(ContentValidator::is_valid_png(&parts.image_bytes), "image should be valid PNG");
 
     // Verify file URI format
-    assert!(
-        parts.file_uri.starts_with("file://"),
-        "should have file:// URI"
-    );
-    assert!(
-        parts.file_uri.contains("screenshot-"),
-        "should reference screenshot file"
-    );
+    assert!(parts.file_uri.starts_with("file://"), "should have file:// URI");
+    assert!(parts.file_uri.contains("screenshot-"), "should reference screenshot file");
 
     // Verify metadata dimensions (MockBackend generates 1920x1080)
     let dims = parts.metadata["dimensions"]
@@ -116,11 +108,7 @@ async fn test_capture_window_creates_temp_file() {
         .await
         .expect("capture should succeed");
 
-    assert_eq!(
-        ctx.temp_file_count(),
-        1,
-        "should have 1 temp file after capture"
-    );
+    assert_eq!(ctx.temp_file_count(), 1, "should have 1 temp file after capture");
 
     // Verify file exists at the URI path
     let uri = ContentValidator::validate_file_uri(&result).expect("should have file URI");
@@ -135,11 +123,7 @@ async fn test_capture_window_creates_temp_file() {
     #[cfg(target_os = "windows")]
     let path = path.replace('/', "\\");
 
-    assert!(
-        std::path::Path::new(&path).exists(),
-        "temp file should exist at: {}",
-        path
-    );
+    assert!(std::path::Path::new(&path).exists(), "temp file should exist at: {}", path);
 }
 
 /// capture_window produces valid PNG with magic bytes
@@ -159,12 +143,12 @@ async fn test_capture_window_png_magic_bytes() {
     assert!(image_bytes.len() >= 8, "image should have at least 8 bytes");
     assert_eq!(image_bytes[0], 0x89, "PNG signature byte 0");
     assert_eq!(image_bytes[1], 0x50, "PNG signature byte 1 (P)");
-    assert_eq!(image_bytes[2], 0x4E, "PNG signature byte 2 (N)");
+    assert_eq!(image_bytes[2], 0x4e, "PNG signature byte 2 (N)");
     assert_eq!(image_bytes[3], 0x47, "PNG signature byte 3 (G)");
-    assert_eq!(image_bytes[4], 0x0D, "PNG signature byte 4");
-    assert_eq!(image_bytes[5], 0x0A, "PNG signature byte 5");
-    assert_eq!(image_bytes[6], 0x1A, "PNG signature byte 6");
-    assert_eq!(image_bytes[7], 0x0A, "PNG signature byte 7");
+    assert_eq!(image_bytes[4], 0x0d, "PNG signature byte 4");
+    assert_eq!(image_bytes[5], 0x0a, "PNG signature byte 5");
+    assert_eq!(image_bytes[6], 0x1a, "PNG signature byte 6");
+    assert_eq!(image_bytes[7], 0x0a, "PNG signature byte 7");
 }
 
 /// capture_window with missing selector fails with appropriate error
@@ -184,10 +168,7 @@ async fn test_capture_window_missing_selector_fails() {
 
     let error = result.unwrap_err();
     let error_msg = format!("{:?}", error);
-    assert!(
-        error_msg.contains("must be specified"),
-        "error should mention missing selector"
-    );
+    assert!(error_msg.contains("must be specified"), "error should mention missing selector");
 }
 
 /// capture_window with nonexistent window fails
@@ -195,9 +176,7 @@ async fn test_capture_window_missing_selector_fails() {
 async fn test_capture_window_not_found_fails() {
     let ctx = McpTestContext::new_with_mock();
 
-    let result = ctx
-        .capture_window_by_title("NonexistentWindow99999")
-        .await;
+    let result = ctx.capture_window_by_title("NonexistentWindow99999").await;
 
     assert!(result.is_err(), "should fail for nonexistent window");
 }
@@ -234,7 +213,10 @@ async fn test_multiple_captures_create_unique_files() {
     let ctx = McpTestContext::new_with_mock();
 
     let _r1 = ctx.capture_window_by_title("Firefox").await.unwrap();
-    let _r2 = ctx.capture_window_by_title("Visual Studio Code").await.unwrap();
+    let _r2 = ctx
+        .capture_window_by_title("Visual Studio Code")
+        .await
+        .unwrap();
     let _r3 = ctx.capture_window_by_title("Terminal").await.unwrap();
 
     assert_eq!(ctx.temp_file_count(), 3, "should have 3 temp files");
@@ -264,7 +246,7 @@ async fn test_capture_with_injected_permission_error() {
 
     let mock = MockBackend::new().with_error(CaptureError::PermissionDenied {
         platform: "test".to_string(),
-        backend: BackendType::None,
+        backend:  BackendType::None,
     });
     let ctx = McpTestContext::new_with_configured_mock(mock);
 
@@ -399,10 +381,7 @@ mod live_windows_tests {
         );
 
         // Verify PNG format
-        assert!(
-            ContentValidator::is_valid_png(&parts.image_bytes),
-            "should be valid PNG"
-        );
+        assert!(ContentValidator::is_valid_png(&parts.image_bytes), "should be valid PNG");
 
         println!(
             "Captured {} bytes, dimensions {:?}",
@@ -441,8 +420,7 @@ mod live_windows_tests {
         let cursor_window = windows.iter().find(|w| {
             let title = w["title"].as_str().unwrap_or("");
             let owner = w["owner"].as_str().unwrap_or("");
-            title.contains("Cursor")
-                || owner.to_lowercase().contains("cursor")
+            title.contains("Cursor") || owner.to_lowercase().contains("cursor")
         });
 
         if cursor_window.is_none() {
@@ -471,10 +449,7 @@ mod live_windows_tests {
             ContentValidator::validate_capture_result(&result).expect("should have valid result");
 
         // Verify we got a real screenshot
-        assert!(
-            ContentValidator::is_valid_png(&parts.image_bytes),
-            "should be valid PNG"
-        );
+        assert!(ContentValidator::is_valid_png(&parts.image_bytes), "should be valid PNG");
         assert!(
             parts.image_bytes.len() > 10_000,
             "Cursor screenshot should be > 10KB, got {} bytes",
@@ -487,7 +462,8 @@ mod live_windows_tests {
             .expect("should have dimensions");
         println!(
             "Captured Cursor: {}x{} pixels, {} bytes",
-            dims[0], dims[1],
+            dims[0],
+            dims[1],
             parts.image_bytes.len()
         );
 

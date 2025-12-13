@@ -20,7 +20,7 @@
 //! DISPLAY=:0 cargo test --test x11_integration_tests test_list_windows_enumerate --features linux-x11 -- --ignored --nocapture
 //! ```
 
-#[cfg(feature = "linux-x11")]
+#[cfg(all(target_os = "linux", feature = "linux-x11"))]
 mod tests {
     use std::time::Instant;
 
@@ -450,7 +450,7 @@ mod tests {
     }
 }
 
-#[cfg(not(feature = "linux-x11"))]
+#[cfg(not(all(target_os = "linux", feature = "linux-x11")))]
 fn main() {
     println!("X11 integration tests require --features linux-x11");
 }
