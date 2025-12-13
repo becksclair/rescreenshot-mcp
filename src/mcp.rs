@@ -234,7 +234,7 @@ impl ScreenshotMcpServer {
     /// }
     /// ```
     #[tool(description = "Check server health and detect platform/backend")]
-    async fn health_check(&self) -> Result<CallToolResult, McpError> {
+    pub async fn health_check(&self) -> Result<CallToolResult, McpError> {
         // Detect the current platform and backend
         let platform_info = detect_platform();
 
@@ -293,7 +293,7 @@ impl ScreenshotMcpServer {
     /// }
     /// ```
     #[tool(description = "List all capturable windows on the system")]
-    async fn list_windows(&self) -> Result<CallToolResult, McpError> {
+    pub async fn list_windows(&self) -> Result<CallToolResult, McpError> {
         // Call backend to enumerate windows
         let windows = self
             .backend

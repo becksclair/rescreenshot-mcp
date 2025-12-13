@@ -528,7 +528,9 @@ impl WindowsBackend {
                 let mut buffer = frame.buffer()?;
 
                 // Convert BGRA to RGBA
-                let raw_data = buffer.as_raw_buffer();
+                // CRITICAL: Use as_nopadding_buffer() to strip GPU stride padding
+                // as_raw_buffer() includes row padding that causes buffer length mismatches
+                let raw_data = buffer.as_nopadding_buffer()?;
                 let mut rgba_data = Vec::with_capacity(raw_data.len());
 
                 for chunk in raw_data.chunks(4) {
@@ -673,7 +675,9 @@ impl WindowsBackend {
 
                 // Get frame buffer
                 let mut buffer = frame.buffer()?;
-                let raw_data = buffer.as_raw_buffer();
+                // CRITICAL: Use as_nopadding_buffer() to strip GPU stride padding
+                // as_raw_buffer() includes row padding that causes buffer length mismatches
+                let raw_data = buffer.as_nopadding_buffer()?;
 
                 // Convert BGRA to RGBA
                 let mut rgba_data = Vec::with_capacity(raw_data.len());
