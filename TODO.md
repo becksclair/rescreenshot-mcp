@@ -2,7 +2,7 @@
 
 ## Project Status
 
-**Current:** M0-M4 Complete ✅ | M5-M6 Planned
+**Current:** M0-M4 Complete ✅ | M6a Planned | M5 Deferred
 **Code Quality:** 500+ tests passing (73 unit + 21 integration for Windows), 0 warnings, production-ready
 **Last Updated:** 2025-12-13
 
@@ -160,11 +160,11 @@
 
 ---
 
-### M6: Documentation, CI/CD, and Release
+### M6a: Documentation, CI/CD, and Release - Linux and Windows
 
 **Target:** Q1 2026
 **Estimated Effort:** 3-5 days
-**Dependencies:** M0-M5 complete
+**Dependencies:** M0-M4 complete
 
 **Scope:**
 
@@ -190,7 +190,7 @@
 - [ ] GitHub Actions workflow (matrix builds)
 - [ ] Ubuntu 22.04 + Fedora 39 (X11/Wayland)
 - [ ] Windows Server 2022
-- [ ] macOS 13+
+- [ ] macOS 13+ (deferred until M5)
 - [ ] Unit tests in CI (automated by coding agent)
 - [ ] Code coverage reporting (automated by coding agent)
 - [ ] Linting and formatting checks (automated by coding agent)
@@ -206,7 +206,7 @@
 #### Phase 5: Packaging & Distribution
 
 - [ ] Linux package roadmap (deb, rpm, AUR, Nix)
-- [ ] macOS packaging (universal binary, codesigning)
+- [ ] macOS packaging (universal binary, codesigning) (deferred until M5)
 - [ ] Windows installer (MSI, Chocolatey)
 - [ ] Homebrew formula
 - [ ] Quick install script
@@ -225,6 +225,27 @@
 - ✅ Automated releases
 - ✅ Multi-platform binaries
 - ✅ Community communication plan
+
+---
+
+### M6b: macOS CI/CD, Packaging, and Release
+
+**Target:** After M5
+**Estimated Effort:** 1-2 days
+**Dependencies:** M5 complete
+
+**Scope:**
+
+- [ ] Enable macOS 13+ CI job (unit tests + clippy + fmt)
+- [ ] Build and publish macOS artifacts (universal binary if feasible)
+- [ ] Codesigning and notarization plan
+- [ ] macOS packaging (Homebrew formula / pkg / dmg decision)
+- [ ] TCC permissions doc checks in release checklist
+
+**Success Criteria:**
+- ✅ macOS CI green on PRs and main
+- ✅ Tagged releases include macOS artifacts
+- ✅ Clear macOS install and permissions guidance
 
 ---
 
@@ -355,24 +376,20 @@
    - [x] Add `WindowsTestContext` fixture for cleaner test setup
    - [x] Visual verification tests with AI screenshot analysis
 
-2. **Immediate:** Prepare for M5
-   - Research macOS ScreenCaptureKit API
-   - Set up macOS development environment
+2. **Immediate:** M6a (Linux + Windows docs, CI, and release)
+   - Expand CI to include Windows (and keep Linux green)
+   - Tighten README quick start + troubleshooting
+   - Define release artifacts + checksums for Linux/Windows
+
+3. **Deferred:** M5 macOS backend
+   - Research ScreenCaptureKit API and TCC flows
    - Create macOS test plan
+   - Implement backend when macOS env is ready
 
-3. **Medium-term:** Implement M5
-   - macOS backend (5-7 days)
-   - TCC permission handling
-   - Apple Silicon optimization
-
-4. **Long-term:** M6 Release
-   - Finalize documentation
-   - Configure CI/CD (GitHub Actions matrix builds)
-   - Package and distribute
-   - Launch and support
+4. **After M5:** M6b macOS CI + packaging
 
 ---
 
-**Document Version:** 2.1
+**Document Version:** 2.2
 **Last Updated:** 2025-12-13
-**Next Review:** When M4 complete
+**Next Review:** When M6a complete

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,8 +12,21 @@ env:
 
 jobs:
   test:
-    name: Test Suite
-    runs-on: ubuntu-latest
+    name: Test - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            # Linux CI should only enable Linux backends; `--all-features` also
+            # flips on other platform feature flags and can hide regressions or
+            # introduce irrelevant build failures.
+            features: --features linux-wayland,linux-x11
+            compile_integration: true
+          - os: windows-latest
+            features: --features windows-backend
+            compile_integration: false
     steps:
       - uses: actions/checkout@v4
 
@@ -22,47 +35,47 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache target directory
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Run unit tests
-        run: cargo test --all-features
+        run: cargo test ${{ matrix.features }} --lib
 
       - name: Compile integration tests (no execution)
+        if: matrix.compile_integration
         run: cargo test --features integration-tests,perf-tests --no-run
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
 
       - name: Check formatting
         run: cargo fmt --check
 
   build:
-    name: Build Check
-    runs-on: ubuntu-latest
+    name: Build - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            features: --features linux-wayland,linux-x11
+            build_measure_capture: true
+          - os: windows-latest
+            features: --features windows-backend
+            build_measure_capture: false
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Build release
-        run: cargo build --release --all-features
+        run: cargo build --release ${{ matrix.features }}
 
       - name: Build measure-capture tool
+        if: matrix.build_measure_capture
         run: cargo build --bin measure-capture --features perf-tests,linux-wayland
