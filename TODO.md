@@ -373,23 +373,6 @@
 
 ---
 
-## Dependencies to Monitor
-
-| Crate | Version | Status |
-|-------|---------|--------|
-| rmcp | 0.8 | ✅ Stable |
-| tokio | 1.35+ | ✅ Stable |
-| serde | 1.0 | ✅ Stable |
-| thiserror | 1.0 | ✅ Stable |
-| image | 0.24+ | ✅ Stable |
-| ashpd | 0.12 | ✅ Stable |
-| x11rb | 0.13 | ✅ Stable |
-| xcap | 0.7 | ✅ Active |
-| keyring | 2.3 | ✅ Stable |
-| tracing | 0.1 | ✅ Stable |
-
----
-
 ## Risks & Mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
@@ -418,31 +401,6 @@
 - Update CHANGELOG.md for releases
 - Maintain architecture docs
 - Document breaking changes
-
-### Release Process
-
-1. Tag commit with version (v1.0.0)
-2. GitHub Actions builds binaries
-3. Create release with notes
-4. Announce on Discord/HN/Reddit
-
----
-
-## Timeline Estimate
-
-| Milestone | Duration | Start | Target |
-|-----------|----------|-------|--------|
-| M0 | ✅ Complete | 2025-10-13 | 2025-10-13 |
-| M1 | ✅ Complete | 2025-10-13 | 2025-10-13 |
-| M2 | ✅ Complete | 2025-10-13 | 2025-10-14 |
-| M3 | ✅ Complete | 2025-10-14 | 2025-11-29 |
-| M4 | 5-6 days | Q1 2026 | Q1 2026 |
-| M5 | 5-7 days | Q1 2026 | Q1 2026 |
-| M6 | 3-5 days | Q1 2026 | Q1 2026 |
-
-**Total:** ~6 weeks for full M0-M6 implementation
-
----
 
 ## Next Steps
 
