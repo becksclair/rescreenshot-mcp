@@ -25,10 +25,15 @@ pub mod wayland_backend;
 #[cfg(feature = "linux-x11")]
 pub mod x11_backend;
 
+#[cfg(feature = "windows-backend")]
+pub mod windows_backend;
+
 pub use image_buffer::ImageBuffer;
 pub use mock::MockBackend;
 #[cfg(feature = "linux-wayland")]
 pub use wayland_backend::{PrimeConsentResult, WaylandBackend};
+#[cfg(feature = "windows-backend")]
+pub use windows_backend::WindowsBackend;
 #[cfg(feature = "linux-x11")]
 pub use x11_backend::X11Backend;
 
