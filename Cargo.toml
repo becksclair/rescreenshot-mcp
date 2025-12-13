@@ -2,7 +2,7 @@
 name = "screenshot-mcp"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.75"
+rust-version = "1.85"
 authors = ["Rebecca <rebecca@example.com>"]
 description = "Cross-platform screenshot MCP server for coding agents"
 license = "MIT"

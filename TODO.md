@@ -2,9 +2,9 @@
 
 ## Project Status
 
-**Current:** M0-M3 Complete ✅ | M4-M6 Planned
-**Code Quality:** 433 tests passing, 0 warnings, production-ready
-**Last Updated:** 2025-11-29
+**Current:** M0-M3 Complete ✅ | M4 In Progress 🚧 | M5-M6 Planned
+**Code Quality:** 450+ tests passing, 0 warnings, production-ready
+**Last Updated:** 2025-12-13
 
 **Important:** All testing and verification steps throughout this roadmap must be executed automatically by the coding agent. Manual testing steps should be converted to automated tests where possible.
 
@@ -69,7 +69,7 @@
 
 ## Planned Milestones 📅
 
-### M4: Windows Graphics Capture Backend (Next)
+### M4: Windows Graphics Capture Backend (In Progress 🚧)
 
 **Target:** Q1 2026
 **Estimated Effort:** 5-6 days
@@ -77,58 +77,58 @@
 
 **Scope:**
 
-#### Phase 1: WindowsBackend Module Skeleton
+#### Phase 1: WindowsBackend Module Skeleton ✅
 
-- [ ] Create `src/capture/windows_backend.rs`
-- [ ] Define `WindowsBackend` struct with connection management
-- [ ] Implement `CaptureFacade` trait with stubs
-- [ ] Add feature gate (`windows-graphics-capture`)
-- [ ] Export from `src/capture/mod.rs`
-- [ ] Basic unit tests (new, capabilities, error stubs)
+- [x] Create `src/capture/windows_backend.rs`
+- [x] Define `WindowsBackend` struct with connection management
+- [x] Implement `CaptureFacade` trait with stubs
+- [x] Add feature gate (`windows-backend`)
+- [x] Export from `src/capture/mod.rs`
+- [x] Basic unit tests (new, capabilities, error stubs)
 
-#### Phase 2: Window Enumeration
+#### Phase 2: Window Enumeration ✅
 
-- [ ] Implement `EnumWindows` wrapper
-- [ ] Query window title, class, executable, PID via Win32 API
-- [ ] Filter out system windows (Shell, hidden)
-- [ ] Implement `list_windows()` with timeout protection
-- [ ] Error handling for access denied
-- [ ] Tests for enumeration and filtering
+- [x] Implement `EnumWindows` wrapper
+- [x] Query window title, class, executable, PID via Win32 API
+- [x] Filter out system windows (Shell, hidden)
+- [x] Implement `list_windows()` with timeout protection
+- [x] Error handling for access denied
+- [x] Tests for enumeration and filtering
 
-#### Phase 3: Window Resolution
+#### Phase 3: Window Resolution ✅
 
-- [ ] Implement `resolve_target()` with matching strategies
-- [ ] Title substring matching (case-insensitive)
-- [ ] Class matching (exact or partial)
-- [ ] Executable path matching
-- [ ] Fuzzy matching as fallback
-- [ ] Tests for all matching strategies
+- [x] Implement `resolve_target()` with matching strategies
+- [x] Title substring matching (case-insensitive)
+- [x] Class matching (exact or partial)
+- [x] Executable path matching
+- [x] Fuzzy matching as fallback
+- [x] Tests for all matching strategies
 
-#### Phase 4: Capture Implementation
+#### Phase 4: Capture Implementation ✅
 
-- [ ] Integrate Windows.Graphics.Capture API
-- [ ] Initialize capture session from window handle
-- [ ] Frame acquisition and conversion to ImageBuffer
-- [ ] Region cropping support
-- [ ] Scale transformation support
-- [ ] Cursor inclusion via WGC flags
-- [ ] Async-safe spawn_blocking wrapper
-- [ ] Timeout protection (2s default)
-- [ ] Tests and integration tests
+- [x] Integrate Windows.Graphics.Capture API
+- [x] Initialize capture session from window handle
+- [x] Frame acquisition and conversion to ImageBuffer
+- [x] Region cropping support
+- [x] Scale transformation support
+- [x] Cursor inclusion via WGC flags
+- [x] Async-safe spawn_blocking wrapper
+- [x] Timeout protection (2s default)
+- [ ] Integration tests (pending)
 
-#### Phase 5: Error Handling & Edge Cases
+#### Phase 5: Error Handling & Edge Cases (Partial)
 
-- [ ] Map Windows API errors to CaptureError
+- [x] Map Windows API errors to CaptureError
 - [ ] Handle closed windows gracefully
 - [ ] Permission denied detection
-- [ ] WGC unavailable detection
+- [x] WGC unavailable detection
 - [ ] Build version checking (17134+)
-- [ ] Comprehensive error messages with remediation
+- [x] Comprehensive error messages with remediation
 - [ ] Tests for all error paths
 
-#### Phase 6: Testing & Documentation
+#### Phase 6: Testing & Documentation (Pending)
 
-- [ ] 15+ unit tests covering all paths (automated by coding agent)
+- [x] 19 unit tests passing (target: 50+)
 - [ ] 4+ integration tests (automated by coding agent)
 - [ ] Performance benchmarking (automated by coding agent)
 - [ ] Windows-specific architecture documentation
@@ -139,10 +139,10 @@
 - ✅ `list_windows()` returns accurate data
 - ✅ `capture_window()` captures by title/class/exe <2s
 - ✅ Cursor included when `include_cursor: true`
-- ✅ Error handling for WGC unavailable
-- ✅ 50+ unit tests passing
+- 🚧 Error handling for WGC unavailable (partial)
+- 🚧 50+ unit tests passing (19/50)
 - ✅ Zero warnings, fully formatted
-- ✅ Windows 10/11 compatibility verified
+- 🚧 Windows 10/11 compatibility verified (needs testing)
 
 ---
 
@@ -404,29 +404,31 @@
 
 ## Next Steps
 
-1. **Immediate:** Keep M0-M3 stable
-   - Monitor test pass rate
-   - Fix any emerging issues
-   - Maintain documentation
+1. **Immediate:** Complete M4 Windows Backend
+   - [ ] Add integration tests for window/display capture
+   - [ ] Add edge case error handling (closed windows, permission denied)
+   - [ ] Add Windows build version checking (17134+)
+   - [ ] Increase unit test coverage to 50+
+   - [ ] Write Windows-specific architecture documentation
 
-2. **Short-term:** Prepare for M4
-   - Research Windows Graphics Capture API
-   - Set up Windows development environment
-   - Create Windows test plan
+2. **Short-term:** Prepare for M5
+   - Research macOS ScreenCaptureKit API
+   - Set up macOS development environment
+   - Create macOS test plan
 
-3. **Medium-term:** Implement M4-M5
-   - Windows backend (4-6 days)
+3. **Medium-term:** Implement M5
    - macOS backend (5-7 days)
-   - Parallel execution if resources available
+   - TCC permission handling
+   - Apple Silicon optimization
 
 4. **Long-term:** M6 Release
    - Finalize documentation
-   - Configure CI/CD
+   - Configure CI/CD (GitHub Actions matrix builds)
    - Package and distribute
    - Launch and support
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2025-11-29
-**Next Review:** When M4 begins
+**Document Version:** 2.1
+**Last Updated:** 2025-12-13
+**Next Review:** When M4 complete

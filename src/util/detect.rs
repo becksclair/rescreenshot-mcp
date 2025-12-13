@@ -49,14 +49,14 @@ pub fn detect_platform() -> PlatformInfo {
 /// provider
 ///
 /// This allows for easier testing by injecting mock environment variables.
-fn detect_platform_with_env<F>(env_provider: F) -> PlatformInfo
+fn detect_platform_with_env<F>(_env_provider: F) -> PlatformInfo
 where
     F: Fn(&str) -> Option<String>,
 {
     #[cfg(target_os = "linux")]
     {
         let os = "linux".to_string();
-        let backend = detect_linux_backend(&env_provider);
+        let backend = detect_linux_backend(&_env_provider);
         PlatformInfo::new(os, backend)
     }
 

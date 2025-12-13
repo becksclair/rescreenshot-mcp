@@ -42,7 +42,7 @@
 //! }
 //! ```
 
-use std::{any::Any, ffi::OsString, os::windows::ffi::OsStringExt, sync::mpsc};
+use std::{any::Any, ffi::OsString, os::windows::ffi::OsStringExt, ptr, sync::mpsc};
 
 use async_trait::async_trait;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
@@ -57,7 +57,7 @@ use windows_capture::{
     window::Window as WcWindow,
 };
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, BOOL, FALSE, HWND, TRUE},
+    Foundation::{CloseHandle, HWND},
     System::{
         ProcessStatus::GetModuleBaseNameW,
         Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
@@ -67,6 +67,11 @@ use windows_sys::Win32::{
         IsWindowVisible,
     },
 };
+
+#[allow(clippy::upper_case_acronyms)]
+type BOOL = i32;
+const TRUE: BOOL = 1;
+const FALSE: BOOL = 0;
 
 use super::{CaptureFacade, ImageBuffer};
 use crate::{
@@ -145,19 +150,22 @@ impl WindowsBackend {
     /// Enumerates all top-level windows using Win32 EnumWindows
     ///
     /// Returns a vector of HWNDs for all visible windows with titles.
-    fn enumerate_window_handles() -> Vec<isize> {
-        let mut handles: Vec<isize> = Vec::new();
+    fn enumerate_window_handles() -> Vec<HWND> {
+        let mut handles: Vec<HWND> = Vec::new();
 
         unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: isize) -> BOOL {
-            let handles = &mut *(lparam as *mut Vec<isize>);
+            // SAFETY: lparam is a valid pointer to Vec<HWND> passed from enumerate_window_handles
+            let handles = unsafe { &mut *(lparam as *mut Vec<HWND>) };
 
             // Only include visible windows
-            if IsWindowVisible(hwnd) == FALSE {
+            // SAFETY: hwnd is a valid window handle from EnumWindows
+            if unsafe { IsWindowVisible(hwnd) } == FALSE {
                 return TRUE; // Continue enumeration
             }
 
             // Only include windows with titles
-            let title_len = GetWindowTextLengthW(hwnd);
+            // SAFETY: hwnd is a valid window handle from EnumWindows
+            let title_len = unsafe { GetWindowTextLengthW(hwnd) };
             if title_len == 0 {
                 return TRUE; // Continue enumeration
             }
@@ -167,7 +175,7 @@ impl WindowsBackend {
         }
 
         unsafe {
-            EnumWindows(Some(enum_callback), &mut handles as *mut Vec<isize> as isize);
+            EnumWindows(Some(enum_callback), &mut handles as *mut Vec<HWND> as isize);
         }
 
         tracing::debug!("Enumerated {} window handles", handles.len());
@@ -175,7 +183,7 @@ impl WindowsBackend {
     }
 
     /// Gets the title of a window
-    fn get_window_title(hwnd: isize) -> String {
+    fn get_window_title(hwnd: HWND) -> String {
         unsafe {
             let len = GetWindowTextLengthW(hwnd);
             if len == 0 {
@@ -197,7 +205,7 @@ impl WindowsBackend {
     }
 
     /// Gets the class name of a window
-    fn get_window_class(hwnd: isize) -> String {
+    fn get_window_class(hwnd: HWND) -> String {
         unsafe {
             let mut buffer: Vec<u16> = vec![0; 256];
             let len = GetClassNameW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
@@ -212,7 +220,7 @@ impl WindowsBackend {
     }
 
     /// Gets the process ID and executable name for a window
-    fn get_window_process_info(hwnd: isize) -> (u32, String) {
+    fn get_window_process_info(hwnd: HWND) -> (u32, String) {
         unsafe {
             let mut pid: u32 = 0;
             GetWindowThreadProcessId(hwnd, &mut pid);
@@ -225,15 +233,15 @@ impl WindowsBackend {
             let process_handle =
                 OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
 
-            if process_handle == 0 {
+            if process_handle.is_null() {
                 return (pid, String::new());
             }
 
-            // Get module base name (exe name) - use 0 for main module
+            // Get module base name (exe name) - use null for main module
             let mut exe_buffer: Vec<u16> = vec![0; 260]; // MAX_PATH
             let len = GetModuleBaseNameW(
                 process_handle,
-                0, // NULL module handle = main executable
+                ptr::null_mut(), // NULL module handle = main executable
                 exe_buffer.as_mut_ptr(),
                 exe_buffer.len() as u32,
             );
@@ -254,7 +262,7 @@ impl WindowsBackend {
     }
 
     /// Fetches complete WindowInfo for a single window handle
-    fn fetch_window_info(hwnd: isize) -> Option<WindowInfo> {
+    fn fetch_window_info(hwnd: HWND) -> Option<WindowInfo> {
         let title = Self::get_window_title(hwnd);
 
         // Skip windows without titles (already filtered in enumeration, but
@@ -267,7 +275,7 @@ impl WindowsBackend {
         let (pid, owner) = Self::get_window_process_info(hwnd);
 
         Some(WindowInfo {
-            id: hwnd.to_string(),
+            id: (hwnd as isize).to_string(),
             title,
             class,
             owner,
@@ -359,16 +367,14 @@ impl WindowsBackend {
     }
 
     /// Creates a windows-capture Window from HWND
-    fn create_wc_window(hwnd: isize) -> CaptureResult<WcWindow> {
-        // Convert isize to raw HWND pointer
-        let raw_hwnd = hwnd as *mut std::ffi::c_void;
-        Ok(WcWindow::from_raw_hwnd(raw_hwnd))
+    fn create_wc_window(hwnd: HWND) -> CaptureResult<WcWindow> {
+        Ok(WcWindow::from_raw_hwnd(hwnd))
     }
 
     /// Synchronously captures a window using WGC
     ///
     /// This function runs in a blocking context via spawn_blocking.
-    fn capture_window_sync(hwnd: isize, include_cursor: bool) -> CaptureResult<DynamicImage> {
+    fn capture_window_sync(hwnd: HWND, include_cursor: bool) -> CaptureResult<DynamicImage> {
         use std::sync::{Arc, Mutex};
 
         use windows_capture::settings::{
@@ -377,7 +383,7 @@ impl WindowsBackend {
 
         // Create window from HWND
         let window = Self::create_wc_window(hwnd)?;
-        tracing::debug!("Created window for capture from HWND: {}", hwnd);
+        tracing::debug!("Created window for capture from HWND: {:?}", hwnd);
 
         // Create channel for receiving the captured frame
         let (tx, rx) = mpsc::sync_channel::<CaptureResult<DynamicImage>>(1);
@@ -757,8 +763,8 @@ impl CaptureFacade for WindowsBackend {
     ) -> CaptureResult<ImageBuffer> {
         tracing::debug!("capture_window called with handle: {}, opts: {:?}", handle, opts);
 
-        // Parse HWND from handle string
-        let hwnd: isize = handle.parse().map_err(|_| CaptureError::InvalidParameter {
+        // Parse HWND from handle string (stored as isize for Send safety)
+        let hwnd_val: isize = handle.parse().map_err(|_| CaptureError::InvalidParameter {
             parameter: "handle".to_string(),
             reason:    format!("Invalid window handle: {}", handle),
         })?;
@@ -769,9 +775,13 @@ impl CaptureFacade for WindowsBackend {
         let include_cursor = opts.include_cursor;
 
         // Run capture in blocking task
+        // Note: We pass hwnd_val (isize) which is Send, then convert to HWND inside
         let image = Self::with_timeout(
             async move {
-                tokio::task::spawn_blocking(move || Self::capture_window_sync(hwnd, include_cursor))
+                tokio::task::spawn_blocking(move || {
+                    let hwnd = hwnd_val as HWND;
+                    Self::capture_window_sync(hwnd, include_cursor)
+                })
                     .await
                     .map_err(|e| {
                         tracing::error!("Capture task panicked: {}", e);
@@ -928,28 +938,28 @@ mod tests {
     #[test]
     fn test_get_window_title() {
         // Test with invalid handle - should return empty string
-        let title = WindowsBackend::get_window_title(0);
+        let title = WindowsBackend::get_window_title(ptr::null_mut());
         assert!(title.is_empty());
     }
 
     #[test]
     fn test_get_window_class() {
         // Test with invalid handle - should return empty string
-        let class = WindowsBackend::get_window_class(0);
+        let class = WindowsBackend::get_window_class(ptr::null_mut());
         assert!(class.is_empty());
     }
 
     #[test]
     fn test_get_window_process_info() {
         // Test with invalid handle
-        let (pid, _owner) = WindowsBackend::get_window_process_info(0);
+        let (pid, _owner) = WindowsBackend::get_window_process_info(ptr::null_mut());
         assert_eq!(pid, 0);
     }
 
     #[test]
     fn test_fetch_window_info_invalid_handle() {
         // Invalid handle should return None
-        let info = WindowsBackend::fetch_window_info(0);
+        let info = WindowsBackend::fetch_window_info(ptr::null_mut());
         assert!(info.is_none());
     }
 
