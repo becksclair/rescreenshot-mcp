@@ -10,10 +10,8 @@
 //! ```
 //! use std::path::PathBuf;
 //!
-//! use screenshot_mcp::{
-//!     model::{CaptureOptions, ImageFormat},
-//!     util::mcp_content::build_capture_result,
-//! };
+//! use screenshot_core::model::{CaptureOptions, ImageFormat};
+//! use screenshot_mcp_server::mcp_content::build_capture_result;
 //!
 //! let image_data = vec![0u8; 100]; // Mock image data
 //! let file_path = PathBuf::from("/tmp/screenshot-12345.png");
@@ -29,8 +27,7 @@ use std::path::Path;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rmcp::model::{CallToolResult, Content};
-
-use crate::model::CaptureOptions;
+use screenshot_core::model::CaptureOptions;
 
 /// Builds MCP image content from raw image bytes
 ///
@@ -50,7 +47,7 @@ use crate::model::CaptureOptions;
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::util::mcp_content::build_image_content;
+/// use screenshot_mcp_server::mcp_content::build_image_content;
 ///
 /// // Mock PNG data (8-byte PNG signature + minimal content)
 /// let png_data = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13];
@@ -94,7 +91,7 @@ pub fn build_image_content(data: &[u8], mime_type: &str) -> Content {
 /// ```
 /// use std::path::PathBuf;
 ///
-/// use screenshot_mcp::util::mcp_content::build_resource_link;
+/// use screenshot_mcp_server::mcp_content::build_resource_link;
 ///
 /// let path = PathBuf::from("/tmp/screenshot-12345.png");
 /// let content = build_resource_link(&path, "image/png", 12345);
@@ -159,10 +156,8 @@ pub fn build_resource_link(path: &Path, mime_type: &str, size: u64) -> Content {
 /// ```
 /// use std::path::PathBuf;
 ///
-/// use screenshot_mcp::{
-///     model::{CaptureOptions, ImageFormat},
-///     util::mcp_content::build_capture_result,
-/// };
+/// use screenshot_core::model::{CaptureOptions, ImageFormat};
+/// use screenshot_mcp_server::mcp_content::build_capture_result;
 ///
 /// let image_data = vec![137, 80, 78, 71, 13, 10, 26, 10]; // PNG signature
 /// let file_path = PathBuf::from("/tmp/screenshot.png");
@@ -220,6 +215,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use screenshot_core::model::ImageFormat;
 
     // ========== build_image_content Tests ==========
 
@@ -323,7 +319,7 @@ mod tests {
         let image_data = vec![137, 80, 78, 71, 13, 10, 26, 10]; // PNG signature
         let file_path = PathBuf::from("/tmp/screenshot.png");
         let opts = CaptureOptions::builder()
-            .format(crate::model::ImageFormat::Png)
+            .format(ImageFormat::Png)
             .quality(80)
             .build();
         let dimensions = (1920, 1080);
@@ -367,9 +363,7 @@ mod tests {
     fn test_build_capture_result_metadata_contains_format() {
         let image_data = vec![0u8; 100];
         let file_path = PathBuf::from("/tmp/test.webp");
-        let opts = CaptureOptions::builder()
-            .format(crate::model::ImageFormat::Webp)
-            .build();
+        let opts = CaptureOptions::builder().format(ImageFormat::Webp).build();
 
         let result = build_capture_result(&image_data, &file_path, &opts, (1920, 1080));
 
@@ -395,25 +389,19 @@ mod tests {
         let file_path = PathBuf::from("/tmp/test.jpg");
 
         // Test PNG
-        let opts_png = CaptureOptions::builder()
-            .format(crate::model::ImageFormat::Png)
-            .build();
+        let opts_png = CaptureOptions::builder().format(ImageFormat::Png).build();
         let result_png = build_capture_result(&image_data, &file_path, &opts_png, (1920, 1080));
         let image_png = result_png.content[0].as_image().unwrap();
         assert_eq!(image_png.mime_type, "image/png");
 
         // Test JPEG
-        let opts_jpeg = CaptureOptions::builder()
-            .format(crate::model::ImageFormat::Jpeg)
-            .build();
+        let opts_jpeg = CaptureOptions::builder().format(ImageFormat::Jpeg).build();
         let result_jpeg = build_capture_result(&image_data, &file_path, &opts_jpeg, (1920, 1080));
         let image_jpeg = result_jpeg.content[0].as_image().unwrap();
         assert_eq!(image_jpeg.mime_type, "image/jpeg");
 
         // Test WebP
-        let opts_webp = CaptureOptions::builder()
-            .format(crate::model::ImageFormat::Webp)
-            .build();
+        let opts_webp = CaptureOptions::builder().format(ImageFormat::Webp).build();
         let result_webp = build_capture_result(&image_data, &file_path, &opts_webp, (1920, 1080));
         let image_webp = result_webp.content[0].as_image().unwrap();
         assert_eq!(image_webp.mime_type, "image/webp");
@@ -424,7 +412,7 @@ mod tests {
         let image_data = vec![0u8; 100];
         let file_path = PathBuf::from("/tmp/test.png");
         let opts = CaptureOptions::builder()
-            .format(crate::model::ImageFormat::Jpeg)
+            .format(ImageFormat::Jpeg)
             .quality(90)
             .scale(0.5)
             .build();

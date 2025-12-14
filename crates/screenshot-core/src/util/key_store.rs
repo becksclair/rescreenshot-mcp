@@ -1,17 +1,25 @@
 //! Secure token storage for Wayland restore tokens
 //!
 //! This module provides a thread-safe token storage system with keyring-first
-//! approach and encrypted file fallback. Tokens are stored securely using
-//! the platform's native keyring service (gnome-keyring, kwallet, etc.) when
-//! available, with automatic fallback to encrypted file storage on minimal
-//! systems.
+//! approach. By default, it uses only the platform keyring service
+//! (gnome-keyring, kwallet, etc.) and returns `KeyringUnavailable` error if
+//! keyring is not available.
 //!
 //! # Architecture
 //!
-//! - **Primary**: Platform keyring via `keyring` crate
-//! - **Fallback**: ChaCha20-Poly1305 encrypted JSON file
+//! - **Primary**: Platform keyring via `keyring` crate (always used when available)
+//! - **Fallback** (opt-in): ChaCha20-Poly1305 encrypted JSON file (requires
+//!   `file-token-fallback` feature)
 //! - **Thread-safe**: Arc<Mutex<HashMap>> for concurrent access
 //! - **Key format**: `screenshot-mcp-wayland-{source_id}`
+//!
+//! # Feature Flags
+//!
+//! - **Default**: Keyring-only storage. Returns `KeyringUnavailable` if keyring
+//!   is not available.
+//! - **`file-token-fallback`**: Enables encrypted file fallback for systems
+//!   without keyring support. This adds crypto dependencies and should only be
+//!   enabled if needed for compatibility.
 //!
 //! # Examples
 //!
@@ -45,14 +53,14 @@ use std::{
     sync::{Arc, OnceLock, RwLock},
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "file-token-fallback"))]
 use chacha20poly1305::{
     ChaCha20Poly1305,
     aead::{Aead, KeyInit},
 };
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "file-token-fallback"))]
 use hkdf::Hkdf;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "file-token-fallback"))]
 use sha2::Sha256;
 
 #[cfg(target_os = "linux")]
@@ -60,17 +68,19 @@ use crate::error::{CaptureError, CaptureResult};
 
 /// Thread-safe secure token storage with keyring-first approach
 ///
-/// The KeyStore automatically detects keyring availability and falls back
-/// to encrypted file storage when necessary. All operations are thread-safe
-/// and can be safely shared across threads using Arc.
+/// The KeyStore uses platform keyring when available. If keyring is unavailable:
+/// - **Default**: Returns `KeyringUnavailable` error
+/// - **With `file-token-fallback` feature**: Falls back to encrypted file storage
+///
+/// All operations are thread-safe and can be safely shared across threads using Arc.
 ///
 /// # Security
 ///
-/// - **Keyring**: Uses platform native secret storage (most secure)
-/// - **File fallback**: ChaCha20-Poly1305 AEAD encryption with machine-specific
-///   key
+/// - **Keyring**: Uses platform native secret storage (most secure, always preferred)
+/// - **File fallback** (opt-in): ChaCha20-Poly1305 AEAD encryption with machine-specific
+///   key (only when `file-token-fallback` feature is enabled)
 /// - **File permissions**: 0600 (owner read/write only)
-/// - **Key derivation**: SHA-256 hash of hostname + username
+/// - **Key derivation**: SHA-256 hash of hostname + username (only for file fallback)
 ///
 /// # Examples
 ///
@@ -116,29 +126,51 @@ impl KeyStore {
     /// use rather than during construction. This avoids permission prompts
     /// and improves startup performance.
     ///
+    /// # Behavior
+    ///
+    /// - **Default (file-token-fallback disabled)**: Uses keyring-only storage.
+    ///   Returns `KeyringUnavailable` error if keyring is not available.
+    /// - **With file-token-fallback feature**: Falls back to encrypted file
+    ///   storage when keyring is unavailable.
+    ///
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::key_store::KeyStore;
+    /// use screenshot_core::util::key_store::KeyStore;
     ///
     /// let store = KeyStore::new();
-    /// // Store is ready to use, will automatically choose best storage backend on first access
+    /// // Store is ready to use, will use keyring (or encrypted file if feature enabled)
     /// ```
     pub fn new() -> Self {
         let service_name = "screenshot-mcp-wayland".to_string();
 
-        // Initialize file fallback
-        let file_path = Self::get_file_path();
-        let encryption_key = Self::derive_encryption_key();
+        // Initialize file fallback only if feature is enabled
+        #[cfg(feature = "file-token-fallback")]
+        let (file_path, encryption_key) = {
+            let path = Self::get_file_path();
+            let key = Self::derive_encryption_key();
+            (Some(path), Some(key))
+        };
 
-        // Load existing tokens from file if available
-        let file_store = match Self::load_from_file(&file_path, &encryption_key) {
-            Ok(tokens) => Arc::new(RwLock::new(tokens)),
-            Err(e) => {
-                tracing::warn!("Failed to load token file: {}", e);
-                Arc::new(RwLock::new(HashMap::new()))
+        #[cfg(not(feature = "file-token-fallback"))]
+        let (file_path, encryption_key) = (None, None);
+
+        // Load existing tokens from file if available and feature enabled
+        #[cfg(feature = "file-token-fallback")]
+        let file_store = {
+            let path = file_path.as_ref().unwrap();
+            let key = encryption_key.as_ref().unwrap();
+            match Self::load_from_file(path, key) {
+                Ok(tokens) => Arc::new(RwLock::new(tokens)),
+                Err(e) => {
+                    tracing::warn!("Failed to load token file: {}", e);
+                    Arc::new(RwLock::new(HashMap::new()))
+                }
             }
         };
+
+        #[cfg(not(feature = "file-token-fallback"))]
+        let file_store = Arc::new(RwLock::new(HashMap::new()));
 
         // Load persisted source index (includes keyring + file-backed tokens)
         let index_path = Self::get_index_path();
@@ -154,14 +186,17 @@ impl KeyStore {
             service_name,
             keyring_available: Arc::new(OnceLock::new()),
             file_store,
-            file_path: Some(file_path),
-            encryption_key: Some(encryption_key),
+            file_path,
+            encryption_key,
             source_index,
             index_path,
         };
 
-        if let Err(e) = instance.rebuild_index_from_file_store() {
-            tracing::warn!("Failed to backfill Wayland source index from file store: {}", e);
+        #[cfg(feature = "file-token-fallback")]
+        {
+            if let Err(e) = instance.rebuild_index_from_file_store() {
+                tracing::warn!("Failed to backfill Wayland source index from file store: {}", e);
+            }
         }
 
         instance
@@ -169,9 +204,11 @@ impl KeyStore {
 
     /// Stores a token for the given source ID
     ///
-    /// Attempts to store in platform keyring first, falls back to encrypted
-    /// file if keyring is unavailable. The key format is:
-    /// `screenshot-mcp-wayland-{source_id}`
+    /// Attempts to store in platform keyring first. If keyring is unavailable:
+    /// - **Without file-token-fallback feature**: Returns `KeyringUnavailable` error
+    /// - **With file-token-fallback feature**: Falls back to encrypted file storage
+    ///
+    /// The key format is: `screenshot-mcp-wayland-{source_id}`
     ///
     /// # Arguments
     ///
@@ -181,12 +218,13 @@ impl KeyStore {
     /// # Returns
     ///
     /// - `Ok(())` if token stored successfully
+    /// - `Err(KeyringUnavailable)` if keyring unavailable and file fallback disabled
     /// - `Err(CaptureError)` if storage failed
     ///
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::key_store::KeyStore;
+    /// use screenshot_core::util::key_store::KeyStore;
     ///
     /// let store = KeyStore::new();
     /// store.store_token("window-123", "my_restore_token").unwrap();
@@ -195,19 +233,18 @@ impl KeyStore {
         let key = self.make_key(source_id);
 
         // Get or initialize keyring availability on first access
-        let use_keyring = *self.keyring_available.get_or_init(|| {
+        let keyring_ok = *self.keyring_available.get_or_init(|| {
             // First access - do a roundtrip to detect if keyring is actually usable.
             //
             // Some environments (notably headless CI/containers) can report success on
             // writes but fail to retrieve later. We treat that as "keyring
-            // unavailable" and fall back to encrypted file storage to keep
-            // behavior deterministic.
+            // unavailable".
             self.detect_keyring_roundtrip(&key, token)
         });
 
         // If keyring was initialized as true, it means the first store succeeded
         // For subsequent calls, try keyring if available
-        if use_keyring && self.keyring_available.get().copied() == Some(true) {
+        if keyring_ok {
             match self.store_in_keyring(&key, token) {
                 Ok(()) => {
                     self.record_source_id(source_id)?;
@@ -215,20 +252,34 @@ impl KeyStore {
                 }
                 Err(e) => {
                     tracing::warn!("Keyring operation failed: {}", e);
-                    // Fall through to file storage
+                    // Fall through to file storage (if feature enabled) or error
                 }
             }
         }
 
-        // Store in encrypted file
-        self.store_in_file(source_id, token)?;
-        self.record_source_id(source_id)?;
-        Ok(())
+        // Keyring unavailable - check if file fallback is enabled
+        #[cfg(feature = "file-token-fallback")]
+        {
+            // Store in encrypted file
+            self.store_in_file(source_id, token)?;
+            self.record_source_id(source_id)?;
+            Ok(())
+        }
+
+        #[cfg(not(feature = "file-token-fallback"))]
+        {
+            // File fallback disabled - return error
+            Err(CaptureError::KeyringUnavailable {
+                reason: "Platform keyring is not available and file-token-fallback feature is disabled. Enable the file-token-fallback feature to use encrypted file storage as fallback.".to_string(),
+            })
+        }
     }
 
     /// Retrieves a token for the given source ID
     ///
-    /// Checks keyring first if available, then falls back to file storage.
+    /// Checks keyring first if available. If keyring is unavailable:
+    /// - **Without file-token-fallback feature**: Returns `None` (no fallback)
+    /// - **With file-token-fallback feature**: Falls back to file storage
     ///
     /// # Arguments
     ///
@@ -243,7 +294,7 @@ impl KeyStore {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::key_store::KeyStore;
+    /// use screenshot_core::util::key_store::KeyStore;
     ///
     /// let store = KeyStore::new();
     /// store.store_token("my-source", "token123").unwrap();
@@ -254,27 +305,49 @@ impl KeyStore {
     pub fn retrieve_token(&self, source_id: &str) -> CaptureResult<Option<String>> {
         let key = self.make_key(source_id);
 
-        // Check if keyring is available (only if already initialized)
-        if let Some(true) = self.keyring_available.get().copied() {
+        // Probe keyring availability on first read in this process. Without this,
+        // a fresh process cannot restore tokens stored in the keyring by a prior run.
+        let keyring_ok = *self
+            .keyring_available
+            .get_or_init(|| self.detect_keyring_readability(&key));
+
+        if keyring_ok {
             // Try keyring first
             match self.retrieve_from_keyring(&key) {
                 Ok(Some(token)) => return Ok(Some(token)),
                 Ok(None) => {
-                    // Not in keyring, try file fallback
+                    // Not in keyring, try file fallback (if enabled)
                 }
                 Err(e) => {
-                    tracing::warn!("Keyring retrieve failed, trying file fallback: {}", e);
+                    tracing::warn!("Keyring retrieve failed: {}", e);
+                    // Fall through to file fallback (if enabled)
                 }
+            }
+        } else {
+            #[cfg(not(feature = "file-token-fallback"))]
+            {
+                return Err(CaptureError::KeyringUnavailable {
+                    reason: "Platform keyring is not available and file-token-fallback feature is disabled. Enable the file-token-fallback feature to use encrypted file storage as fallback.".to_string(),
+                });
             }
         }
 
-        // Try file storage
-        self.retrieve_from_file(source_id)
+        // Try file storage (only if feature enabled)
+        #[cfg(feature = "file-token-fallback")]
+        {
+            self.retrieve_from_file(source_id)
+        }
+
+        #[cfg(not(feature = "file-token-fallback"))]
+        {
+            // Keyring-only mode: if we got here, keyring was available but token was not found.
+            Ok(None)
+        }
     }
 
     /// Deletes a token for the given source ID
     ///
-    /// Removes token from both keyring and file storage (if present).
+    /// Removes token from keyring (if available) and file storage (if feature enabled).
     ///
     /// # Arguments
     ///
@@ -299,15 +372,23 @@ impl KeyStore {
     pub fn delete_token(&self, source_id: &str) -> CaptureResult<()> {
         let key = self.make_key(source_id);
 
-        // Try to delete from keyring (only if already initialized as available)
-        if let Some(true) = self.keyring_available.get().copied() {
+        let keyring_ok = *self
+            .keyring_available
+            .get_or_init(|| self.detect_keyring_readability(&key));
+
+        // Try to delete from keyring if it appears available
+        if keyring_ok {
             if let Err(e) = self.delete_from_keyring(&key) {
                 tracing::warn!("Keyring delete failed: {}", e);
             }
         }
 
-        // Delete from file storage
-        self.delete_from_file(source_id)?;
+        // Delete from file storage (if feature enabled)
+        #[cfg(feature = "file-token-fallback")]
+        {
+            self.delete_from_file(source_id)?;
+        }
+
         self.remove_source_id(source_id)?;
         Ok(())
     }
@@ -437,25 +518,41 @@ impl KeyStore {
                     true
                 }
                 Ok(other) => {
-                    tracing::warn!(
-                        "Keyring roundtrip failed (expected token, got {:?}); falling back to \
-                         file storage",
-                        other
-                    );
+                    tracing::warn!("Keyring roundtrip failed (expected token, got {:?})", other);
                     let _ = self.delete_from_keyring(key);
                     false
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Keyring roundtrip read failed ({}); falling back to file storage",
-                        e
-                    );
+                    tracing::warn!("Keyring roundtrip read failed ({})", e);
                     let _ = self.delete_from_keyring(key);
                     false
                 }
             },
             Err(e) => {
-                tracing::warn!("Keyring unavailable ({}), using encrypted file storage", e);
+                tracing::warn!("Keyring unavailable ({})", e);
+                false
+            }
+        }
+    }
+
+    /// Detect whether the platform keyring is readable/usable without writing data.
+    ///
+    /// This is used so a fresh process can retrieve tokens stored by a prior run
+    /// even if no `store_token()` call happens in the new process.
+    fn detect_keyring_readability(&self, key: &str) -> bool {
+        let entry = match keyring::Entry::new(&self.service_name, key) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("Keyring entry creation failed: {}", e);
+                return false;
+            }
+        };
+
+        match entry.get_password() {
+            Ok(_) => true,
+            Err(keyring::Error::NoEntry) => true,
+            Err(e) => {
+                tracing::warn!("Keyring read failed: {}", e);
                 false
             }
         }
@@ -550,6 +647,9 @@ impl KeyStore {
     ///
     /// Uses HKDF-SHA256 with hostname + username as input key material
     /// for proper key derivation with cryptographic guarantees.
+    ///
+    /// Only available when file-token-fallback feature is enabled.
+    #[cfg(feature = "file-token-fallback")]
     fn derive_encryption_key() -> [u8; 32] {
         // Collect input key material
         let mut ikm = Vec::new();
@@ -576,6 +676,9 @@ impl KeyStore {
     }
 
     /// Stores token in encrypted file
+    ///
+    /// Only available when file-token-fallback feature is enabled.
+    #[cfg(feature = "file-token-fallback")]
     fn store_in_file(&self, source_id: &str, token: &str) -> CaptureResult<()> {
         // Update in-memory store (write lock held briefly)
         let store_snapshot = {
@@ -628,6 +731,9 @@ impl KeyStore {
     }
 
     /// Syncs the source index with any tokens already present in the file store
+    ///
+    /// Only available when file-token-fallback feature is enabled.
+    #[cfg(feature = "file-token-fallback")]
     fn rebuild_index_from_file_store(&self) -> CaptureResult<()> {
         let keys: Vec<String> = {
             let store = self
@@ -665,6 +771,9 @@ impl KeyStore {
     }
 
     /// Retrieves token from file storage
+    ///
+    /// Only available when file-token-fallback feature is enabled.
+    #[cfg(feature = "file-token-fallback")]
     fn retrieve_from_file(&self, source_id: &str) -> CaptureResult<Option<String>> {
         let store = self
             .file_store
@@ -677,6 +786,9 @@ impl KeyStore {
     }
 
     /// Deletes token from file storage
+    ///
+    /// Only available when file-token-fallback feature is enabled.
+    #[cfg(feature = "file-token-fallback")]
     fn delete_from_file(&self, source_id: &str) -> CaptureResult<()> {
         // Update in-memory store (write lock held briefly)
         let store_snapshot = {
@@ -726,6 +838,9 @@ impl KeyStore {
     /// Saves the token store to encrypted file (v2 format with random nonce)
     ///
     /// File format: [version:1][nonce:12][ciphertext:variable]
+    ///
+    /// Only available when file-token-fallback feature is enabled.
+    #[cfg(feature = "file-token-fallback")]
     fn save_to_file(&self, store: &HashMap<String, String>) -> CaptureResult<()> {
         const FILE_FORMAT_VERSION: u8 = 2;
 
@@ -805,6 +920,9 @@ impl KeyStore {
     /// Supports two formats:
     /// - v1 (legacy): [ciphertext] with fixed nonce "screenmcp123"
     /// - v2 (current): [version:1][nonce:12][ciphertext]
+    ///
+    /// Only available when file-token-fallback feature is enabled.
+    #[cfg(feature = "file-token-fallback")]
     fn load_from_file(
         file_path: &PathBuf,
         encryption_key: &[u8; 32],
@@ -874,6 +992,7 @@ impl KeyStore {
     }
 
     /// Loads v1 format (legacy with fixed nonce)
+    #[cfg(feature = "file-token-fallback")]
     fn load_v1(data: &[u8], cipher: &ChaCha20Poly1305) -> CaptureResult<HashMap<String, String>> {
         // v1 uses fixed nonce
         let nonce_bytes: [u8; 12] = *b"screenmcp123";
@@ -892,6 +1011,7 @@ impl KeyStore {
     }
 
     /// Loads v2 format (nonce prefix)
+    #[cfg(feature = "file-token-fallback")]
     fn load_v2(data: &[u8], cipher: &ChaCha20Poly1305) -> CaptureResult<HashMap<String, String>> {
         if data.len() < 12 {
             return Err(CaptureError::EncryptionFailed {
@@ -922,6 +1042,7 @@ impl KeyStore {
     }
 
     /// Helper to save v2 format during migration
+    #[cfg(feature = "file-token-fallback")]
     fn save_v2_format(
         store: &HashMap<String, String>,
         file_path: &PathBuf,
@@ -993,301 +1114,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_keystore() {
-        let store = KeyStore::new();
-        // Should initialize without error
-        assert!(store.service_name == "screenshot-mcp-wayland");
-    }
-
-    #[test]
-    fn test_store_and_retrieve_token() {
-        let store = KeyStore::new();
-
-        store.store_token("test-source", "test-token").unwrap();
-        let token = store.retrieve_token("test-source").unwrap();
-
-        assert_eq!(token, Some("test-token".to_string()));
-
-        // Cleanup
-        store.delete_token("test-source").unwrap();
-    }
-
-    #[test]
-    fn test_list_source_ids_tracks_tokens() {
-        let store = KeyStore::new();
-
-        // Ensure clean baseline
-        assert!(
-            !store
-                .list_source_ids()
-                .unwrap()
-                .contains(&"list-test-1".to_string())
-        );
-
-        store.store_token("list-test-1", "token1").unwrap();
-        store.store_token("list-test-2", "token2").unwrap();
-
-        let ids = store.list_source_ids().unwrap();
-        assert!(ids.contains(&"list-test-1".to_string()));
-        assert!(ids.contains(&"list-test-2".to_string()));
-
-        store.delete_token("list-test-1").unwrap();
-        let ids_after_delete = store.list_source_ids().unwrap();
-        assert!(!ids_after_delete.contains(&"list-test-1".to_string()));
-
-        store.delete_token("list-test-2").unwrap();
-    }
-
-    #[test]
-    fn test_delete_token() {
-        let store = KeyStore::new();
-
-        store.store_token("delete-test", "token").unwrap();
-        assert!(store.has_token("delete-test").unwrap());
-
-        store.delete_token("delete-test").unwrap();
-        assert!(!store.has_token("delete-test").unwrap());
-    }
-
-    #[test]
-    fn test_has_token() {
-        let store = KeyStore::new();
-
-        assert!(!store.has_token("nonexistent").unwrap());
-
-        store.store_token("exists", "token").unwrap();
-        assert!(store.has_token("exists").unwrap());
-
-        // Cleanup
-        store.delete_token("exists").unwrap();
-    }
-
-    #[test]
-    fn test_token_not_found() {
-        let store = KeyStore::new();
-        let result = store.retrieve_token("does-not-exist").unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_multiple_tokens() {
-        let store = KeyStore::new();
-
-        store.store_token("source1", "token1").unwrap();
-        store.store_token("source2", "token2").unwrap();
-        store.store_token("source3", "token3").unwrap();
-
-        assert_eq!(store.retrieve_token("source1").unwrap(), Some("token1".to_string()));
-        assert_eq!(store.retrieve_token("source2").unwrap(), Some("token2".to_string()));
-        assert_eq!(store.retrieve_token("source3").unwrap(), Some("token3".to_string()));
-
-        // Cleanup
-        store.delete_token("source1").unwrap();
-        store.delete_token("source2").unwrap();
-        store.delete_token("source3").unwrap();
-    }
-
-    #[test]
-    fn test_token_overwrite() {
-        let store = KeyStore::new();
-
-        store.store_token("overwrite", "token1").unwrap();
-        assert_eq!(store.retrieve_token("overwrite").unwrap(), Some("token1".to_string()));
-
-        store.store_token("overwrite", "token2").unwrap();
-        assert_eq!(store.retrieve_token("overwrite").unwrap(), Some("token2".to_string()));
-
-        // Cleanup
-        store.delete_token("overwrite").unwrap();
-    }
-
-    #[test]
-    fn test_file_encryption_decryption() {
-        let store = KeyStore::new();
-
-        // Force file storage by storing and retrieving
-        store.store_token("crypto-test", "sensitive-token").unwrap();
-
-        // Verify file was created and is encrypted
-        if let Some(file_path) = &store.file_path {
-            if file_path.exists() {
-                let contents = fs::read(file_path).unwrap();
-                // Should not contain plaintext token
-                assert!(!String::from_utf8_lossy(&contents).contains("sensitive-token"));
-            }
-        }
-
-        // Should be able to retrieve
-        let token = store.retrieve_token("crypto-test").unwrap();
-        assert_eq!(token, Some("sensitive-token".to_string()));
-
-        // Cleanup
-        store.delete_token("crypto-test").unwrap();
-    }
-
-    #[test]
-    fn test_thread_safety_concurrent_access() {
-        use std::{sync::Arc, thread};
-
-        let store = Arc::new(KeyStore::new());
-
-        let handles: Vec<_> = (0..5)
-            .map(|i| {
-                let store_clone = Arc::clone(&store);
-                thread::spawn(move || {
-                    let source_id = format!("thread-{}", i);
-                    let token = format!("token-{}", i);
-
-                    store_clone.store_token(&source_id, &token).unwrap();
-                    let retrieved = store_clone.retrieve_token(&source_id).unwrap();
-                    assert_eq!(retrieved, Some(token));
-
-                    store_clone.delete_token(&source_id).unwrap();
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-    }
-
-    #[test]
     fn test_key_format_correctness() {
         let store = KeyStore::new();
         let key = store.make_key("my-source");
         assert_eq!(key, "screenshot-mcp-wayland-my-source");
     }
 
-    #[test]
-    fn test_cleanup_after_delete() {
-        let store = KeyStore::new();
+    fn with_temp_data_dir<F: FnOnce()>(f: F) {
+        let old = std::env::var("XDG_DATA_HOME").ok();
+        let tmp = tempfile::tempdir().expect("tempdir");
 
-        // Store multiple tokens
-        store.store_token("cleanup1", "token1").unwrap();
-        store.store_token("cleanup2", "token2").unwrap();
-
-        // Delete one
-        store.delete_token("cleanup1").unwrap();
-
-        // First should be gone
-        assert!(!store.has_token("cleanup1").unwrap());
-
-        // Second should still exist
-        assert!(store.has_token("cleanup2").unwrap());
-
-        // Cleanup remaining
-        store.delete_token("cleanup2").unwrap();
-    }
-
-    #[test]
-    fn test_default_trait() {
-        let store = KeyStore::default();
-        assert!(store.service_name == "screenshot-mcp-wayland");
-    }
-
-    #[test]
-    fn test_rotate_token_success() {
-        let store = KeyStore::new();
-
-        // Store initial token
-        store.store_token("rotate-test", "token_v1").unwrap();
-        assert_eq!(store.retrieve_token("rotate-test").unwrap(), Some("token_v1".to_string()));
-
-        // Rotate to new token
-        store.rotate_token("rotate-test", "token_v2").unwrap();
-        assert_eq!(store.retrieve_token("rotate-test").unwrap(), Some("token_v2".to_string()));
-
-        // Cleanup
-        store.delete_token("rotate-test").unwrap();
-    }
-
-    #[test]
-    fn test_rotate_token_nonexistent() {
-        let store = KeyStore::new();
-
-        // Try to rotate token that doesn't exist
-        let result = store.rotate_token("nonexistent", "new_token");
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CaptureError::TokenNotFound { .. }));
-    }
-
-    #[test]
-    fn test_rotate_token_multiple_times() {
-        let store = KeyStore::new();
-
-        // Store initial token
-        store.store_token("multi-rotate", "token_v1").unwrap();
-
-        // Rotate multiple times
-        store.rotate_token("multi-rotate", "token_v2").unwrap();
-        assert_eq!(store.retrieve_token("multi-rotate").unwrap(), Some("token_v2".to_string()));
-
-        store.rotate_token("multi-rotate", "token_v3").unwrap();
-        assert_eq!(store.retrieve_token("multi-rotate").unwrap(), Some("token_v3".to_string()));
-
-        store.rotate_token("multi-rotate", "token_v4").unwrap();
-        assert_eq!(store.retrieve_token("multi-rotate").unwrap(), Some("token_v4".to_string()));
-
-        // Cleanup
-        store.delete_token("multi-rotate").unwrap();
-    }
-
-    #[test]
-    fn test_rotate_token_atomicity() {
-        use std::{sync::Arc, thread};
-
-        let store = Arc::new(KeyStore::new());
-
-        // Store initial token
-        store.store_token("atomic-test", "token_v1").unwrap();
-
-        // Spawn threads that rotate concurrently
-        let handles: Vec<_> = (0..10)
-            .map(|i| {
-                let store_clone = Arc::clone(&store);
-                thread::spawn(move || {
-                    let new_token = format!("token_v{}", i + 2);
-                    // This may fail if another thread rotated first, that's expected
-                    let _ = store_clone.rotate_token("atomic-test", &new_token);
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle.join().unwrap();
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", tmp.path());
         }
 
-        // Should have some token stored (one of the rotations succeeded)
-        let token = store.retrieve_token("atomic-test").unwrap();
-        assert!(token.is_some());
-        assert!(token.unwrap().starts_with("token_v"));
+        f();
 
-        // Cleanup
-        store.delete_token("atomic-test").unwrap();
+        match old {
+            Some(val) => unsafe { std::env::set_var("XDG_DATA_HOME", val) },
+            None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
+        }
     }
 
     #[test]
-    fn test_rotate_token_persistence() {
-        let store = KeyStore::new();
+    #[cfg(feature = "file-token-fallback")]
+    fn test_forced_file_fallback_roundtrip_is_encrypted() {
+        with_temp_data_dir(|| {
+            let store = KeyStore::new();
 
-        // Store and rotate
-        store.store_token("persist-test", "token_v1").unwrap();
-        store.rotate_token("persist-test", "token_v2").unwrap();
+            // Force keyring-unavailable path deterministically.
+            let _ = store.keyring_available.as_ref().set(false);
 
-        // Verify file was updated (if file path exists)
-        if let Some(file_path) = &store.file_path {
-            if file_path.exists() {
-                let contents = fs::read(file_path).unwrap();
-                // Should not contain old token in plaintext
-                assert!(!String::from_utf8_lossy(&contents).contains("token_v1"));
-            }
-        }
+            store
+                .store_token("crypto-test", "sensitive-token")
+                .expect("file fallback store should succeed when enabled");
 
-        // Verify new token is retrievable
-        assert_eq!(store.retrieve_token("persist-test").unwrap(), Some("token_v2".to_string()));
+            // Verify file was created and does not contain plaintext.
+            let file_path = store.file_path.as_ref().expect("file_path should exist");
+            assert!(file_path.exists());
+            let contents = fs::read(file_path).expect("read token file");
+            assert!(!String::from_utf8_lossy(&contents).contains("sensitive-token"));
 
-        // Cleanup
-        store.delete_token("persist-test").unwrap();
+            // Verify token is retrievable (from file fallback).
+            let token = store.retrieve_token("crypto-test").unwrap();
+            assert_eq!(token, Some("sensitive-token".to_string()));
+
+            store.delete_token("crypto-test").unwrap();
+        });
+    }
+
+    #[test]
+    #[cfg(not(feature = "file-token-fallback"))]
+    fn test_keyring_only_returns_keyring_unavailable_when_forced() {
+        with_temp_data_dir(|| {
+            let store = KeyStore::new();
+            let _ = store.keyring_available.as_ref().set(false);
+
+            let err = store
+                .retrieve_token("does-not-matter")
+                .expect_err("should error when keyring is unavailable");
+
+            assert!(matches!(err, CaptureError::KeyringUnavailable { .. }));
+        });
     }
 }

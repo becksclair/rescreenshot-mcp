@@ -15,10 +15,16 @@ use async_trait::async_trait;
 
 use crate::{
     error::CaptureResult,
-    model::{Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
+    model::{
+        Capabilities, CaptureOptions, CaptureSource, WindowHandle, WindowInfo, WindowSelector,
+    },
 };
 
+#[cfg(target_os = "linux")]
+use crate::error::CaptureError;
+
 pub mod image_buffer;
+pub mod matching;
 pub mod mock;
 
 #[cfg(target_os = "linux")]
@@ -31,6 +37,7 @@ pub mod x11_backend;
 pub mod windows_backend;
 
 pub use image_buffer::ImageBuffer;
+pub use matching::WindowMatcher;
 pub use mock::MockBackend;
 #[cfg(target_os = "linux")]
 pub use wayland_backend::{PrimeConsentResult, WaylandBackend};
@@ -198,8 +205,9 @@ pub fn create_default_backend() -> CaptureResult<Arc<dyn CaptureFacade>> {
                 let primary: Arc<dyn CaptureFacade> = Arc::new(WaylandBackend::new(key_store));
 
                 // If X11 is available in this session (e.g., XWayland), keep it as a fallback.
-                let fallback: Option<Arc<dyn CaptureFacade>> =
-                    X11Backend::new().ok().map(|b| Arc::new(b) as Arc<dyn CaptureFacade>);
+                let fallback: Option<Arc<dyn CaptureFacade>> = X11Backend::new()
+                    .ok()
+                    .map(|b| Arc::new(b) as Arc<dyn CaptureFacade>);
 
                 Ok(if fallback.is_some() {
                     Arc::new(LinuxAutoBackend::new(primary, fallback))
@@ -207,9 +215,7 @@ pub fn create_default_backend() -> CaptureResult<Arc<dyn CaptureFacade>> {
                     primary
                 })
             }
-            BackendType::X11 => {
-                Ok(Arc::new(X11Backend::new()?))
-            }
+            BackendType::X11 => Ok(Arc::new(X11Backend::new()?)),
             BackendType::None | BackendType::Windows | BackendType::MacOS => {
                 Err(CaptureError::BackendNotAvailable {
                     backend: BackendType::None,
@@ -540,6 +546,65 @@ pub trait CaptureFacade: Send + Sync {
         display_id: Option<u32>,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer>;
+
+    /// Unified capture entry point for all source types
+    ///
+    /// This is the primary method for capturing screenshots. It accepts a
+    /// [`CaptureSource`] enum that can represent windows, displays, or regions,
+    /// providing a single, extensible API for all capture operations.
+    ///
+    /// # Arguments
+    ///
+    /// - `source` - The capture source (window, display, or region)
+    /// - `opts` - Capture options (format, quality, scale, region, cursor)
+    ///
+    /// # Returns
+    ///
+    /// An [`ImageBuffer`] containing the captured screenshot.
+    ///
+    /// # Errors
+    ///
+    /// See [`capture_window`](CaptureFacade::capture_window) and
+    /// [`capture_display`](CaptureFacade::capture_display) for error details.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use screenshot_core::{
+    ///     capture::CaptureFacade,
+    ///     model::{CaptureOptions, CaptureSource},
+    /// };
+    ///
+    /// async fn capture_example(backend: &dyn CaptureFacade) -> Result<(), Box<dyn std::error::Error>> {
+    ///     let opts = CaptureOptions::default();
+    ///
+    ///     // Capture a window
+    ///     let window_source = CaptureSource::Window("12345".to_string());
+    ///     let window_img = backend.capture(window_source, &opts).await?;
+    ///
+    ///     // Capture primary display
+    ///     let display_source = CaptureSource::Display(None);
+    ///     let display_img = backend.capture(display_source, &opts).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    async fn capture(
+        &self,
+        source: CaptureSource,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        match source {
+            CaptureSource::Window(handle) => self.capture_window(handle, opts).await,
+            CaptureSource::Display(display_id) => self.capture_display(display_id, opts).await,
+            CaptureSource::Region(region) => {
+                // For now, region capture is implemented as post-processing on display capture
+                // Future backends may support native region capture
+                let display_img = self.capture_display(None, opts).await?;
+                display_img.crop(region)
+            }
+        }
+    }
 
     /// Returns the capabilities of this backend
     ///

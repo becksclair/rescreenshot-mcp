@@ -14,7 +14,7 @@
 //! # Examples
 //!
 //! ```
-//! use screenshot_mcp::{
+//! use screenshot_core::{
 //!     capture::ImageBuffer,
 //!     model::{CaptureOptions, ImageFormat},
 //!     util::encode::encode_image,
@@ -47,10 +47,14 @@ use crate::{
 /// Maps a quality value (0-100) to a PNG compression type
 ///
 /// Since PNG encoding doesn't have a quality parameter in the same way as JPEG,
-/// we map quality ranges to compression levels:
-/// - 0-33: Fast compression (faster encoding, larger files)
-/// - 34-66: Default compression (balanced)
-/// - 67-100: Best compression (slower encoding, smaller files)
+/// we map quality ranges to compression levels. For the critical path (MCP server),
+/// we optimize for speed by default:
+/// - 0-85: Fast compression (faster encoding, larger files) - **default path**
+/// - 86-95: Default compression (balanced)
+/// - 96-100: Best compression (slower encoding, smaller files) - only for archival
+///
+/// This ensures the default quality (80) maps to Fast compression for low latency,
+/// since PNG is lossless and file size differences are acceptable for screenshots.
 ///
 /// # Arguments
 ///
@@ -60,25 +64,31 @@ use crate::{
 ///
 /// ```
 /// use image::codecs::png::CompressionType;
-/// use screenshot_mcp::util::encode::compression_type_from_quality;
+/// use screenshot_core::util::encode::compression_type_from_quality;
 ///
+/// // Default quality (80) maps to Fast for low latency
+/// assert!(matches!(compression_type_from_quality(80), CompressionType::Fast));
+///
+/// // Lower values also use Fast
 /// assert!(matches!(compression_type_from_quality(20), CompressionType::Fast));
-/// assert!(matches!(compression_type_from_quality(50), CompressionType::Default));
-/// assert!(matches!(compression_type_from_quality(90), CompressionType::Best));
+///
+/// // Higher values use Best for archival
+/// assert!(matches!(compression_type_from_quality(98), CompressionType::Best));
 /// ```
 pub fn compression_type_from_quality(quality: u8) -> CompressionType {
     match quality {
-        0..=33 => CompressionType::Fast,
-        34..=66 => CompressionType::Default,
-        67..=100 => CompressionType::Best,
-        _ => CompressionType::Best, // Values > 100 use best compression
+        0..=85 => CompressionType::Fast, // Fast path (includes default quality 80)
+        86..=95 => CompressionType::Default, // Balanced
+        96..=100 => CompressionType::Best, // Best compression for archival
+        _ => CompressionType::Fast,      // Values > 100 default to Fast
     }
 }
 
 /// Encodes an image as PNG with default compression
 ///
-/// Uses default compression level and adaptive filtering for good balance
-/// between encoding speed and file size. PNG encoding is always lossless.
+/// Uses Fast compression level by default for low latency on the critical path.
+/// PNG encoding is always lossless. For archival use, use `encode_png_with_compression`
+/// with `CompressionType::Best`.
 ///
 /// # Arguments
 ///
@@ -91,14 +101,14 @@ pub fn compression_type_from_quality(quality: u8) -> CompressionType {
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::{capture::ImageBuffer, util::encode::encode_png};
+/// use screenshot_core::{capture::ImageBuffer, util::encode::encode_png};
 ///
 /// let img = ImageBuffer::from_test_pattern(100, 100);
 /// let png_bytes = encode_png(&img).unwrap();
 /// assert!(!png_bytes.is_empty());
 /// ```
 pub fn encode_png(buffer: &ImageBuffer) -> CaptureResult<Vec<u8>> {
-    encode_png_with_compression(buffer, CompressionType::Default)
+    encode_png_with_compression(buffer, CompressionType::Fast)
 }
 
 /// Encodes an image as PNG with specified compression level
@@ -119,7 +129,7 @@ pub fn encode_png(buffer: &ImageBuffer) -> CaptureResult<Vec<u8>> {
 ///
 /// ```
 /// use image::codecs::png::CompressionType;
-/// use screenshot_mcp::{capture::ImageBuffer, util::encode::encode_png_with_compression};
+/// use screenshot_core::{capture::ImageBuffer, util::encode::encode_png_with_compression};
 ///
 /// let img = ImageBuffer::from_test_pattern(100, 100);
 ///
@@ -173,7 +183,7 @@ pub fn encode_png_with_compression(
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::{capture::ImageBuffer, util::encode::encode_jpeg};
+/// use screenshot_core::{capture::ImageBuffer, util::encode::encode_jpeg};
 ///
 /// let img = ImageBuffer::from_test_pattern(100, 100);
 ///
@@ -236,7 +246,7 @@ pub fn encode_jpeg(buffer: &ImageBuffer, quality: u8) -> CaptureResult<Vec<u8>> 
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::{capture::ImageBuffer, util::encode::encode_webp};
+/// use screenshot_core::{capture::ImageBuffer, util::encode::encode_webp};
 ///
 /// let img = ImageBuffer::from_test_pattern(100, 100);
 ///
@@ -294,7 +304,7 @@ pub fn encode_webp(buffer: &ImageBuffer, _quality: u8) -> CaptureResult<Vec<u8>>
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::{
+/// use screenshot_core::{
 ///     capture::ImageBuffer,
 ///     model::{CaptureOptions, ImageFormat},
 ///     util::encode::encode_image,
@@ -323,6 +333,7 @@ pub fn encode_webp(buffer: &ImageBuffer, _quality: u8) -> CaptureResult<Vec<u8>>
 pub fn encode_image(buffer: &ImageBuffer, opts: &CaptureOptions) -> CaptureResult<Vec<u8>> {
     match opts.format {
         ImageFormat::Png => {
+            // Use Fast compression by default for low latency (quality 80 maps to Fast)
             let compression = compression_type_from_quality(opts.quality);
             encode_png_with_compression(buffer, compression)
         }
@@ -341,19 +352,20 @@ mod tests {
 
     #[test]
     fn test_compression_type_from_quality() {
-        // Fast range (0-33)
+        // Fast range (0-85) - includes default quality 80
         assert!(matches!(compression_type_from_quality(0), CompressionType::Fast));
         assert!(matches!(compression_type_from_quality(20), CompressionType::Fast));
-        assert!(matches!(compression_type_from_quality(33), CompressionType::Fast));
+        assert!(matches!(compression_type_from_quality(80), CompressionType::Fast));
+        assert!(matches!(compression_type_from_quality(85), CompressionType::Fast));
 
-        // Default range (34-66)
-        assert!(matches!(compression_type_from_quality(34), CompressionType::Default));
-        assert!(matches!(compression_type_from_quality(50), CompressionType::Default));
-        assert!(matches!(compression_type_from_quality(66), CompressionType::Default));
+        // Default range (86-95) - balanced
+        assert!(matches!(compression_type_from_quality(86), CompressionType::Default));
+        assert!(matches!(compression_type_from_quality(90), CompressionType::Default));
+        assert!(matches!(compression_type_from_quality(95), CompressionType::Default));
 
-        // Best range (67-100)
-        assert!(matches!(compression_type_from_quality(67), CompressionType::Best));
-        assert!(matches!(compression_type_from_quality(80), CompressionType::Best));
+        // Best range (96-100) - for archival
+        assert!(matches!(compression_type_from_quality(96), CompressionType::Best));
+        assert!(matches!(compression_type_from_quality(98), CompressionType::Best));
         assert!(matches!(compression_type_from_quality(100), CompressionType::Best));
     }
 

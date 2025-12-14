@@ -8,7 +8,7 @@
 //! # Examples
 //!
 //! ```
-//! use screenshot_mcp::{model::ImageFormat, util::temp_files::TempFileManager};
+//! use screenshot_core::{model::ImageFormat, util::temp_files::TempFileManager};
 //!
 //! let manager = TempFileManager::new();
 //!
@@ -73,7 +73,7 @@ impl TempFile {
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::{model::ImageFormat, util::temp_files::TempFileManager};
+/// use screenshot_core::{model::ImageFormat, util::temp_files::TempFileManager};
 ///
 /// let manager = TempFileManager::new();
 ///
@@ -95,7 +95,7 @@ impl TempFileManager {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::temp_files::TempFileManager;
+    /// use screenshot_core::util::temp_files::TempFileManager;
     ///
     /// let manager = TempFileManager::new();
     /// ```
@@ -143,7 +143,7 @@ impl TempFileManager {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::temp_files::TempFileManager;
+    /// use screenshot_core::util::temp_files::TempFileManager;
     ///
     /// let manager = TempFileManager::new();
     /// let path = manager.create_temp_file("screenshot", "png").unwrap();
@@ -169,6 +169,15 @@ impl TempFileManager {
 
         // Create the file (empty initially)
         fs::File::create(&path).map_err(CaptureError::IoError)?;
+
+        // Set restrictive permissions on Unix (0600 = owner read/write only)
+        // This prevents other users from reading potentially sensitive screenshot data
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = fs::Permissions::from_mode(0o600);
+            fs::set_permissions(&path, permissions).map_err(CaptureError::IoError)?;
+        }
 
         // Track the file
         let temp_file = TempFile::new(path.clone(), timestamp);
@@ -198,7 +207,7 @@ impl TempFileManager {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::{model::ImageFormat, util::temp_files::TempFileManager};
+    /// use screenshot_core::{model::ImageFormat, util::temp_files::TempFileManager};
     ///
     /// let manager = TempFileManager::new();
     /// let image_data = vec![0u8; 1024]; // Dummy image data
@@ -229,7 +238,7 @@ impl TempFileManager {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::temp_files::TempFileManager;
+    /// use screenshot_core::util::temp_files::TempFileManager;
     ///
     /// let manager = TempFileManager::new();
     /// let path = manager.create_temp_file("screenshot", "png").unwrap();
@@ -257,7 +266,7 @@ impl TempFileManager {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::temp_files::TempFileManager;
+    /// use screenshot_core::util::temp_files::TempFileManager;
     ///
     /// let manager = TempFileManager::new();
     /// assert_eq!(manager.count(), 0);
@@ -274,7 +283,7 @@ impl TempFileManager {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::temp_files::TempFileManager;
+    /// use screenshot_core::util::temp_files::TempFileManager;
     ///
     /// let manager = TempFileManager::new();
     /// manager.create_temp_file("screenshot", "png").unwrap();

@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rmcp::{ServiceExt, transport::stdio};
-use screenshot_mcp::{
-    capture::create_default_backend, mcp::ScreenshotMcpServer, util::temp_files::TempFileManager,
-};
+use screenshot_core::capture::create_default_backend;
+use screenshot_core::util::temp_files::TempFileManager;
+use screenshot_mcp_server::mcp::ScreenshotMcpServer;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -19,8 +19,9 @@ async fn main() -> Result<()> {
     // Default level: info
     fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("screenshot_mcp=info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                EnvFilter::new("screenshot_mcp_server=info,screenshot_core=info")
+            }),
         )
         // MCP uses stdout for JSON-RPC frames. Any non-protocol bytes on stdout
         // (like human logs or ANSI color codes) will corrupt the stream and

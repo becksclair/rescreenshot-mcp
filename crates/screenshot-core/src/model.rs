@@ -109,7 +109,7 @@ impl std::fmt::Display for ImageFormat {
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::model::{PersistMode, SourceType, WaylandSource};
+/// use screenshot_core::model::{PersistMode, SourceType, WaylandSource};
 ///
 /// // Restore a previous session (headless, no prompt)
 /// let restore = WaylandSource::RestoreSession {
@@ -358,6 +358,46 @@ impl std::fmt::Display for PersistMode {
 /// etc.)
 pub type WindowHandle = String;
 
+/// Unified capture source abstraction
+///
+/// Represents the target for screenshot capture operations. This enum provides
+/// a single entry point for all capture types, making it easier to extend
+/// with new source types in the future.
+///
+/// # Examples
+///
+/// ```
+/// use screenshot_core::model::{CaptureSource, Region};
+///
+/// // Capture a window by handle
+/// let source = CaptureSource::Window("12345".to_string());
+///
+/// // Capture primary display
+/// let source = CaptureSource::Display(None);
+///
+/// // Capture secondary display
+/// let source = CaptureSource::Display(Some(1));
+///
+/// // Capture a region (future extension)
+/// let source = CaptureSource::Region(Region::new(100, 100, 800, 600));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum CaptureSource {
+    /// Capture a specific window by handle
+    Window(WindowHandle),
+    /// Capture an entire display
+    ///
+    /// - `None`: Primary display
+    /// - `Some(id)`: Display with the given ID (0 = primary, 1 = secondary, etc.)
+    Display(Option<u32>),
+    /// Capture a rectangular region of the screen (future extension)
+    ///
+    /// Note: Region capture may be implemented as post-processing on display
+    /// capture depending on backend capabilities.
+    Region(Region),
+}
+
 /// Rectangular region for partial screen capture
 ///
 /// Coordinates are in pixels, with (0, 0) at the top-left corner of the screen.
@@ -394,7 +434,7 @@ impl Region {
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::model::WindowSelector;
+/// use screenshot_core::model::WindowSelector;
 ///
 /// // Select by title substring
 /// let selector = WindowSelector {
@@ -544,7 +584,7 @@ impl Default for Capabilities {
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::model::{CaptureOptions, ImageFormat};
+/// use screenshot_core::model::{CaptureOptions, ImageFormat};
 ///
 /// // Default options (PNG, quality=80, scale=1.0)
 /// let opts = CaptureOptions::default();

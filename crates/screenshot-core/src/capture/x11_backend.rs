@@ -18,9 +18,21 @@
 //!
 //! # X11 Security Model
 //!
-//! X11 allows direct window enumeration and capture without explicit user
-//! permission. This backend queries EWMH (_NET) properties for window metadata
-//! and uses xcap for screenshot capture.
+//! **Important:** X11 has no permission model for screenshot capture. Unlike
+//! Wayland (which requires explicit user consent via portal dialogs) or Windows
+//! (which uses capability-based Graphics Capture API), X11 allows any
+//! application to:
+//!
+//! - Enumerate all windows on the display
+//! - Read window contents (screenshots) without user notification
+//! - Access window properties including titles and class names
+//!
+//! This is an inherent limitation of the X11 protocol design from the 1980s.
+//! Users concerned about screenshot privacy should use Wayland-based compositors
+//! which enforce explicit consent flows.
+//!
+//! This backend queries EWMH (_NET) properties for window metadata and uses
+//! xcap for screenshot capture.
 //!
 //! # Examples
 //!
@@ -58,7 +70,7 @@ use x11rb::{
     rust_connection::RustConnection,
 };
 
-use super::{CaptureFacade, ImageBuffer};
+use super::{CaptureFacade, ImageBuffer, WindowMatcher};
 use crate::{
     error::{CaptureError, CaptureResult},
     model::{BackendType, Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
@@ -843,7 +855,11 @@ impl X11Backend {
     ///
     /// - `Some(WindowHandle)` - First matching window
     /// - `None` - No match or invalid regex
+    ///
+    /// Note: This function is kept for backward compatibility in tests.
+    /// The main matching logic now uses WindowMatcher with AND semantics.
     #[cfg(target_os = "linux")]
+    #[allow(dead_code)] // Used in tests
     fn try_regex_match(&self, pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         // Try to compile as regex with safety limits
         let regex = RegexBuilder::new(pattern)
@@ -881,6 +897,10 @@ impl X11Backend {
     ///
     /// - `Some(WindowHandle)` - First matching window
     /// - `None` - No match
+    ///
+    /// Note: This function is kept for backward compatibility in tests.
+    /// The main matching logic now uses WindowMatcher with AND semantics.
+    #[allow(dead_code)] // Used in tests
     fn try_substring_match(&self, substring: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         let substring_lower = substring.to_lowercase();
 
@@ -909,6 +929,10 @@ impl X11Backend {
     ///
     /// - `Some(WindowHandle)` - First matching window
     /// - `None` - No match
+    ///
+    /// Note: This function is kept for backward compatibility in tests.
+    /// The main matching logic now uses WindowMatcher with AND semantics.
+    #[allow(dead_code)] // Used in tests
     fn try_exact_class_match(&self, class: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         for window in windows {
             if window.class.eq_ignore_ascii_case(class) {
@@ -934,6 +958,10 @@ impl X11Backend {
     ///
     /// - `Some(WindowHandle)` - First matching window
     /// - `None` - No match
+    ///
+    /// Note: This function is kept for backward compatibility in tests.
+    /// The main matching logic now uses WindowMatcher with AND semantics.
+    #[allow(dead_code)] // Used in tests
     fn try_exact_exe_match(&self, exe: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         for window in windows {
             if window.owner.eq_ignore_ascii_case(exe) {
@@ -959,7 +987,11 @@ impl X11Backend {
     ///
     /// - `Some(WindowHandle)` - Best fuzzy match (score >= 60)
     /// - `None` - No match above threshold
+    ///
+    /// Note: This function is kept for backward compatibility in tests.
+    /// The main matching logic now uses WindowMatcher with AND semantics.
     #[cfg(target_os = "linux")]
+    #[allow(dead_code)] // Used in tests
     fn try_fuzzy_match(&self, pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         let matcher = SkimMatcherV2::default();
         const THRESHOLD: i64 = 60;
@@ -1047,16 +1079,8 @@ impl CaptureFacade for X11Backend {
 
     /// Resolves a window selector to a window handle
     ///
-    /// Searches for windows matching the selector using this evaluation order:
-    /// 1. **Regex match** - If `title_substring_or_regex` is a valid regex
-    ///    pattern
-    /// 2. **Substring match** - Case-insensitive substring search on title
-    /// 3. **Exact class match** - Exact match on WM_CLASS
-    /// 4. **Exact exe match** - Exact match on process name (derived from
-    ///    WM_CLASS instance)
-    /// 5. **Fuzzy match** - Scored fuzzy matching (threshold >= 60)
-    ///
-    /// Returns the highest-scoring match if multiple windows qualify.
+    /// Uses `WindowMatcher` with AND semantics: when multiple fields are
+    /// specified, all must match.
     ///
     /// # Arguments
     ///
@@ -1074,22 +1098,20 @@ impl CaptureFacade for X11Backend {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// // Regex match
-    /// let selector = WindowSelector::by_title("Fire.*");
+    /// // Title only
+    /// let selector = WindowSelector::by_title("Firefox");
     /// let handle = backend.resolve_target(&selector).await?;
     ///
-    /// // Substring match
-    /// let selector = WindowSelector::by_title("code");
-    /// let handle = backend.resolve_target(&selector).await?;
-    ///
-    /// // Class match
-    /// let selector = WindowSelector::by_class("Alacritty");
+    /// // Title AND class (AND semantics)
+    /// let selector = WindowSelector {
+    ///     title_substring_or_regex: Some("Firefox".to_string()),
+    ///     class: Some("Navigator".to_string()),
+    ///     exe: None,
+    /// };
     /// let handle = backend.resolve_target(&selector).await?;
     /// ```
     #[cfg(target_os = "linux")]
     async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
-        use std::time::Duration;
-
         tracing::debug!("Resolving window target: {:?}", selector);
 
         // Validate selector is not empty
@@ -1111,60 +1133,14 @@ impl CaptureFacade for X11Backend {
             });
         }
 
-        // Try evaluation chain with timeout (50ms per strategy, 200ms total)
-        let result = tokio::time::timeout(Duration::from_millis(200), async {
-            // Strategy 1: Regex match on title
-            if let Some(ref pattern) = selector.title_substring_or_regex {
-                if let Some(handle) = self.try_regex_match(pattern, &windows) {
-                    tracing::info!("Resolved window via regex: {}", handle);
-                    return Ok(handle);
-                }
-            }
-
-            // Strategy 2: Case-insensitive substring match on title
-            if let Some(ref substring) = selector.title_substring_or_regex {
-                if let Some(handle) = self.try_substring_match(substring, &windows) {
-                    tracing::info!("Resolved window via substring: {}", handle);
-                    return Ok(handle);
-                }
-            }
-
-            // Strategy 3: Exact class match
-            if let Some(ref class) = selector.class {
-                if let Some(handle) = self.try_exact_class_match(class, &windows) {
-                    tracing::info!("Resolved window via class: {}", handle);
-                    return Ok(handle);
-                }
-            }
-
-            // Strategy 4: Exact exe match (owner field contains instance name)
-            if let Some(ref exe) = selector.exe {
-                if let Some(handle) = self.try_exact_exe_match(exe, &windows) {
-                    tracing::info!("Resolved window via exe: {}", handle);
-                    return Ok(handle);
-                }
-            }
-
-            // Strategy 5: Fuzzy match (threshold >= 60)
-            if let Some(ref pattern) = selector.title_substring_or_regex {
-                if let Some(handle) = self.try_fuzzy_match(pattern, &windows) {
-                    tracing::info!("Resolved window via fuzzy match: {}", handle);
-                    return Ok(handle);
-                }
-            }
-
-            // No match found
-            Err(CaptureError::WindowNotFound {
+        // Use WindowMatcher with AND semantics
+        let matcher = WindowMatcher::new();
+        matcher.find_match(selector, &windows).ok_or_else(|| {
+            tracing::debug!("No window matched selector: {:?}", selector);
+            CaptureError::WindowNotFound {
                 selector: selector.clone(),
-            })
+            }
         })
-        .await
-        .map_err(|_| {
-            tracing::warn!("Window resolution timed out after 200ms");
-            CaptureError::CaptureTimeout { duration_ms: 200 }
-        })??;
-
-        Ok(result)
     }
 
     #[cfg(not(target_os = "linux"))]

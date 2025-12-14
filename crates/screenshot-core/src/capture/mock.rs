@@ -23,7 +23,7 @@
 //! ## Basic Usage
 //!
 //! ```
-//! use screenshot_mcp::{
+//! use screenshot_core::{
 //!     capture::{CaptureFacade, mock::MockBackend},
 //!     model::{CaptureOptions, WindowSelector},
 //! };
@@ -51,7 +51,7 @@
 //! ```
 //! use std::time::Duration;
 //!
-//! use screenshot_mcp::{
+//! use screenshot_core::{
 //!     capture::{CaptureFacade, mock::MockBackend},
 //!     model::CaptureOptions,
 //! };
@@ -69,7 +69,7 @@
 //! ## With Error Injection
 //!
 //! ```
-//! use screenshot_mcp::{
+//! use screenshot_core::{
 //!     capture::{CaptureFacade, mock::MockBackend},
 //!     error::CaptureError,
 //!     model::{BackendType, WindowSelector},
@@ -95,7 +95,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::time::sleep;
 
-use super::{CaptureFacade, ImageBuffer};
+use super::{CaptureFacade, ImageBuffer, WindowMatcher};
 use crate::{
     error::{CaptureError, CaptureResult},
     model::{BackendType, Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
@@ -136,7 +136,7 @@ impl MockBackend {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::capture::mock::MockBackend;
+    /// use screenshot_core::capture::mock::MockBackend;
     ///
     /// let backend = MockBackend::new();
     /// ```
@@ -162,7 +162,7 @@ impl MockBackend {
     /// ```
     /// use std::time::Duration;
     ///
-    /// use screenshot_mcp::capture::mock::MockBackend;
+    /// use screenshot_core::capture::mock::MockBackend;
     ///
     /// let backend = MockBackend::new().with_delay(Duration::from_millis(100));
     /// ```
@@ -183,7 +183,11 @@ impl MockBackend {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::{capture::mock::MockBackend, error::CaptureError, model::BackendType};
+    /// use screenshot_core::{
+    ///     capture::mock::MockBackend,
+    ///     error::CaptureError,
+    ///     model::BackendType,
+    /// };
     ///
     /// let error = CaptureError::PermissionDenied {
     ///     platform: "test".to_string(),
@@ -298,40 +302,14 @@ impl MockBackend {
         Ok(())
     }
 
-    /// Performs fuzzy matching to find a window by selector
+    /// Finds a window matching the selector using WindowMatcher
     ///
-    /// Matching rules:
-    /// - Title: Case-insensitive substring match
-    /// - Class: Exact case-sensitive match
-    /// - Exe: Exact case-sensitive match
-    /// - Multiple criteria: All must match (AND logic)
-    fn fuzzy_match_window(&self, selector: &WindowSelector) -> Option<&WindowInfo> {
-        self.windows.iter().find(|window| {
-            let title_matches = selector
-                .title_substring_or_regex
-                .as_ref()
-                .map(|pattern| {
-                    window
-                        .title
-                        .to_lowercase()
-                        .contains(&pattern.to_lowercase())
-                })
-                .unwrap_or(true);
-
-            let class_matches = selector
-                .class
-                .as_ref()
-                .map(|class| window.class == *class)
-                .unwrap_or(true);
-
-            let exe_matches = selector
-                .exe
-                .as_ref()
-                .map(|exe| window.owner == *exe)
-                .unwrap_or(true);
-
-            title_matches && class_matches && exe_matches
-        })
+    /// Uses `WindowMatcher` with AND semantics for consistency with other backends.
+    fn find_matching_window(&self, selector: &WindowSelector) -> Option<&WindowInfo> {
+        let matcher = WindowMatcher::new();
+        matcher
+            .find_match(selector, &self.windows)
+            .and_then(|handle| self.windows.iter().find(|w| w.id == handle))
     }
 
     /// Validates that a window handle exists in the mock window list
@@ -387,7 +365,7 @@ impl CaptureFacade for MockBackend {
         self.apply_delay().await;
         self.check_error_injection()?;
 
-        self.fuzzy_match_window(selector)
+        self.find_matching_window(selector)
             .map(|window| window.id.clone())
             .ok_or_else(|| CaptureError::WindowNotFound {
                 selector: selector.clone(),

@@ -36,7 +36,7 @@ use crate::model::{BackendType, PlatformInfo};
 /// # Examples
 ///
 /// ```
-/// use screenshot_mcp::util::detect::detect_platform;
+/// use screenshot_core::util::detect::detect_platform;
 ///
 /// let platform = detect_platform();
 /// println!("Running on: {} with backend: {}", platform.os, platform.backend);

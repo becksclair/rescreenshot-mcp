@@ -43,7 +43,7 @@ mod common;
 use common::windows_helpers::{
     WindowsTestContext, measure_timing, save_test_image, validate_image_pixels,
 };
-use screenshot_mcp::{
+use screenshot_core::{
     capture::{CaptureFacade, windows_backend::WindowsBackend},
     model::{CaptureOptions, Region, WindowSelector},
 };
@@ -153,7 +153,7 @@ async fn test_capture_display_real() {
 /// Test window capture with region cropping
 #[tokio::test]
 async fn test_capture_with_region() {
-    use screenshot_mcp::model::Region;
+    use screenshot_core::model::Region;
 
     let backend = WindowsBackend::new().expect("Failed to create backend");
 
@@ -164,12 +164,32 @@ async fn test_capture_with_region() {
         .expect("Failed to list windows");
     let first_window = windows.first().expect("No windows available");
 
+    // First capture without region to get actual window dimensions
+    let full_image = backend
+        .capture_window(first_window.id.clone(), &CaptureOptions::default())
+        .await
+        .expect("Failed to capture full window");
+
+    let (full_width, full_height) = full_image.dimensions();
+    println!("Full window size: {}x{}", full_width, full_height);
+
+    // Calculate a region that fits within the window (use half the size, offset by quarter)
+    let region_width = (full_width / 2).max(1);
+    let region_height = (full_height / 2).max(1);
+    let region_x = full_width / 4;
+    let region_y = full_height / 4;
+
+    println!(
+        "Requesting region: {}x{} at ({}, {})",
+        region_width, region_height, region_x, region_y
+    );
+
     let opts = CaptureOptions {
         region: Some(Region {
-            x: 10,
-            y: 10,
-            width: 100,
-            height: 100,
+            x: region_x,
+            y: region_y,
+            width: region_width,
+            height: region_height,
         }),
         ..Default::default()
     };
@@ -182,8 +202,8 @@ async fn test_capture_with_region() {
     let (width, height) = image.dimensions();
     println!("Captured region: {}x{} pixels", width, height);
 
-    assert_eq!(width, 100, "Region width should be 100");
-    assert_eq!(height, 100, "Region height should be 100");
+    assert_eq!(width, region_width, "Region width should match requested");
+    assert_eq!(height, region_height, "Region height should match requested");
 }
 
 /// Test window capture with scaling

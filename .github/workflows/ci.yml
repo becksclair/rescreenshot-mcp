@@ -36,7 +36,8 @@ jobs:
             libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev \
             libdrm-dev libgbm-dev libegl1-mesa-dev \
             libsecret-1-dev \
-            libpipewire-0.3-dev libspa-0.2-dev
+            libpipewire-0.3-dev libspa-0.2-dev \
+            xvfb
 
       - name: Install Dependencies (Fedora)
         if: startsWith(matrix.container, 'fedora')
@@ -70,6 +71,11 @@ jobs:
 
       - name: Run tests (with coverage)
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Run X11 integration tests (headless)
+        if: startsWith(matrix.container, 'ubuntu')
+        run: |
+          xvfb-run -a cargo test --test x11_integration_tests -p screenshot-core --all-features
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

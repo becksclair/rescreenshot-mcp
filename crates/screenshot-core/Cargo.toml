@@ -1,0 +1,87 @@
+[package]
+name = "screenshot-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core screenshot capture library with platform backends"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["time"] }
+async-trait.workspace = true
+futures.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Date/time for timestamps
+chrono.workspace = true
+
+# Image processing (optional via features)
+image = { version = "0.25", features = ["png", "jpeg", "webp"], optional = true }
+tempfile = { version = "3.10", optional = true }
+
+# Window matching
+regex.workspace = true
+fuzzy-matcher.workspace = true
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = "0.12"
+x11rb = "0.13"
+xcap = "0.7"
+keyring = "3.6"
+pipewire = "0.8"
+
+# Encryption for secure file storage fallback (Wayland restore tokens)
+chacha20poly1305 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+hostname = { version = "0.4", optional = true }
+hkdf = { version = "0.12", optional = true }
+rand = { version = "0.9", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemInformation",
+    "Win32_System_Registry"
+] }
+windows-capture = "1.3"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[features]
+default = ["image-processing"]
+# Image processing
+image-processing = ["dep:image", "dep:tempfile"]
+# Encrypted file fallback for Wayland token storage (default: off for security)
+file-token-fallback = [
+    "dep:chacha20poly1305",
+    "dep:sha2",
+    "dep:hostname",
+    "dep:hkdf",
+    "dep:rand",
+]
+# Testing features
+integration-tests = []
+perf-tests = []
+
+[[bench]]
+name = "encode_perf"
+harness = false

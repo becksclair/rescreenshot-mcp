@@ -74,7 +74,7 @@ type BOOL = i32;
 const TRUE: BOOL = 1;
 const FALSE: BOOL = 0;
 
-use super::{CaptureFacade, ImageBuffer};
+use super::{CaptureFacade, ImageBuffer, WindowMatcher};
 use crate::{
     error::{CaptureError, CaptureResult},
     model::{BackendType, Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
@@ -91,7 +91,8 @@ const LIST_WINDOWS_TIMEOUT_MS: u64 = 1500;
 /// - Large windows (4K, 8K displays)
 /// - GPU scheduling delays
 /// - Compositing effects
-const CAPTURE_WINDOW_TIMEOUT_MS: u64 = 2000;
+/// - Complex Electron apps (Cursor, VS Code, etc.)
+const CAPTURE_WINDOW_TIMEOUT_MS: u64 = 5000;
 
 /// Minimum Windows build number for Windows Graphics Capture
 ///
@@ -310,7 +311,7 @@ impl WindowsBackend {
             // GetWindowTextW requires a buffer large enough to hold len characters PLUS the
             // null terminator. Off-by-one errors here are a common Win32 pitfall that can
             // cause buffer overruns, memory corruption, or silent truncation.
-            // 
+            //
             // Buffer size MUST be: (len + 1) * sizeof(u16) bytes
             // This is equivalent to: vec![0; (len + 1) as usize] for u16 elements
             //
@@ -418,11 +419,14 @@ impl WindowsBackend {
     }
 
     // ========== Window Matching Strategies ==========
+    // Note: These functions are kept for backward compatibility in tests.
+    // The main matching logic now uses WindowMatcher with AND semantics.
 
     /// Tries to match a window by regex pattern on title
     ///
     /// Returns the first window whose title matches the pattern.
     /// Pattern size is limited to 1MB to prevent ReDoS.
+    #[allow(dead_code)] // Used in tests
     fn try_regex_match(pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         // Limit pattern size to prevent ReDoS
         if pattern.len() > 1_000_000 {
@@ -445,6 +449,7 @@ impl WindowsBackend {
     }
 
     /// Tries to match a window by substring in title (case-insensitive)
+    #[allow(dead_code)] // Used in tests
     fn try_substring_match(substring: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         fn normalize_whitespace_lowercase(s: &str) -> String {
             s.split_whitespace()
@@ -461,6 +466,7 @@ impl WindowsBackend {
     }
 
     /// Tries to match a window by exact class name (case-insensitive)
+    #[allow(dead_code)] // Used in tests
     fn try_exact_class_match(class: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         let lower_class = class.to_lowercase();
         windows
@@ -470,6 +476,7 @@ impl WindowsBackend {
     }
 
     /// Tries to match a window by exact executable name (case-insensitive)
+    #[allow(dead_code)] // Used in tests
     fn try_exact_exe_match(exe: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         let lower_exe = exe.to_lowercase();
         windows
@@ -481,6 +488,7 @@ impl WindowsBackend {
     /// Tries to match a window using fuzzy matching on title
     ///
     /// Returns the window with the highest score above threshold (60).
+    #[allow(dead_code)] // Used in tests
     fn try_fuzzy_match(pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         let matcher = SkimMatcherV2::default();
         const FUZZY_THRESHOLD: i64 = 60;
@@ -817,12 +825,8 @@ impl CaptureFacade for WindowsBackend {
 
     /// Resolves a window selector to a specific window handle
     ///
-    /// Uses multiple matching strategies in priority order:
-    /// 1. Regex match on title
-    /// 2. Substring match on title (case-insensitive)
-    /// 3. Exact class match
-    /// 4. Exact exe match
-    /// 5. Fuzzy match (threshold >= 60)
+    /// Uses `WindowMatcher` with AND semantics: when multiple fields are
+    /// specified, all must match.
     async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
         tracing::debug!("resolve_target called with selector: {:?}", selector);
 
@@ -845,51 +849,13 @@ impl CaptureFacade for WindowsBackend {
             });
         }
 
-        // Try matching strategies in priority order
-
-        // 1. If title is specified, try regex, then substring, then fuzzy
-        if let Some(title) = &selector.title_substring_or_regex {
-            // Try regex first
-            if let Some(handle) = Self::try_regex_match(title, &windows) {
-                tracing::debug!("Matched by regex: {}", handle);
-                return Ok(handle);
+        // Use WindowMatcher with AND semantics
+        let matcher = WindowMatcher::new();
+        matcher.find_match(selector, &windows).ok_or_else(|| {
+            tracing::debug!("No window matched selector: {:?}", selector);
+            CaptureError::WindowNotFound {
+                selector: selector.clone(),
             }
-
-            // Fall back to substring
-            if let Some(handle) = Self::try_substring_match(title, &windows) {
-                tracing::debug!("Matched by substring: {}", handle);
-                return Ok(handle);
-            }
-        }
-
-        // 2. Try exact class match
-        if let Some(class) = &selector.class {
-            if let Some(handle) = Self::try_exact_class_match(class, &windows) {
-                tracing::debug!("Matched by class: {}", handle);
-                return Ok(handle);
-            }
-        }
-
-        // 3. Try exact exe match
-        if let Some(exe) = &selector.exe {
-            if let Some(handle) = Self::try_exact_exe_match(exe, &windows) {
-                tracing::debug!("Matched by exe: {}", handle);
-                return Ok(handle);
-            }
-        }
-
-        // 4. Try fuzzy match on title as last resort
-        if let Some(title) = &selector.title_substring_or_regex {
-            if let Some(handle) = Self::try_fuzzy_match(title, &windows) {
-                tracing::debug!("Matched by fuzzy: {}", handle);
-                return Ok(handle);
-            }
-        }
-
-        // No match found
-        tracing::debug!("No window matched selector: {:?}", selector);
-        Err(CaptureError::WindowNotFound {
-            selector: selector.clone(),
         })
     }
 
@@ -1272,7 +1238,7 @@ mod tests {
     #[test]
     fn test_timeout_constants() {
         assert_eq!(LIST_WINDOWS_TIMEOUT_MS, 1500);
-        assert_eq!(CAPTURE_WINDOW_TIMEOUT_MS, 2000);
+        assert_eq!(CAPTURE_WINDOW_TIMEOUT_MS, 5000);
     }
 
     #[test]

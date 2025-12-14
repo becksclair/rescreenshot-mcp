@@ -12,7 +12,7 @@ default:
 
 # Build release binary
 build:
-    cargo build --release
+    cargo build --release -p screenshot-mcp-server
 
 # Build with all features enabled
 build-all:
@@ -20,11 +20,11 @@ build-all:
 
 # Build Wayland backend
 build-wayland:
-    cargo build --release
+    cargo build --release -p screenshot-mcp-server
 
 # Build performance measurement tool
 build-perf:
-    cargo build --bin measure-capture --features perf-tests --release
+    cargo build -p screenshot-cli --bin measure-capture --features perf-tests --release
 
 # Clean build artifacts
 clean:
@@ -49,10 +49,6 @@ test-all:
 # Run library tests only
 test-lib:
     cargo test --lib
-
-# Run Wayland backend tests
-test-wayland:
-    cargo test
 
 # Run tests with performance utilities
 test-perf:
@@ -89,19 +85,19 @@ perf-memory CAPTURES="10":
 
 # Prime Wayland consent for performance testing
 perf-prime SOURCE_ID="wayland-perf":
-    cargo run --bin measure-capture --features perf-tests --release -- prime-consent {{SOURCE_ID}}
+    cargo run -p screenshot-cli --bin measure-capture --features perf-tests --release -- prime-consent {{SOURCE_ID}}
 
 # Run headless batch captures (requires priming first)
 perf-batch SOURCE_ID="wayland-perf" CAPTURES="30":
-    cargo run --bin measure-capture --features perf-tests --release -- headless-batch --captures {{CAPTURES}} {{SOURCE_ID}}
+    cargo run -p screenshot-cli --bin measure-capture --features perf-tests --release -- headless-batch --captures {{CAPTURES}} {{SOURCE_ID}}
 
 # Measure token rotation performance
 perf-rotation SOURCE_ID="wayland-perf" CAPTURES="10":
-    cargo run --bin measure-capture --features perf-tests --release -- token-rotation --captures {{CAPTURES}} {{SOURCE_ID}}
+    cargo run -p screenshot-cli --bin measure-capture --features perf-tests --release -- token-rotation --captures {{CAPTURES}} {{SOURCE_ID}}
 
 # Show performance thresholds
 perf-summary:
-    cargo run --bin measure-capture --features perf-tests --release -- summary
+    cargo run -p screenshot-cli --bin measure-capture --features perf-tests --release -- summary
 
 # ============================================================================
 # Code Quality
@@ -152,15 +148,15 @@ doc-check:
 
 # Run the MCP server (stdio mode)
 run:
-    cargo run --release
+    cargo run --release -p screenshot-mcp-server
 
 # Run server with debug logging
 run-debug:
-    RUST_LOG=screenshot_mcp=debug cargo run --release
+    RUST_LOG=screenshot_mcp_server=debug,screenshot_core=debug cargo run --release -p screenshot-mcp-server
 
 # Run server with trace logging
 run-trace:
-    RUST_LOG=screenshot_mcp=trace cargo run --release
+    RUST_LOG=screenshot_mcp_server=trace,screenshot_core=trace cargo run --release -p screenshot-mcp-server
 
 # ============================================================================
 # Acceptance Testing

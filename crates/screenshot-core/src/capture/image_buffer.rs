@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```
-//! use screenshot_mcp::{capture::ImageBuffer, model::Region};
+//! use screenshot_core::{capture::ImageBuffer, model::Region};
 //!
 //! // Create a test pattern
 //! let img = ImageBuffer::from_test_pattern(1920, 1080);
@@ -48,7 +48,7 @@ impl ImageBuffer {
     ///
     /// ```
     /// use image::DynamicImage;
-    /// use screenshot_mcp::capture::ImageBuffer;
+    /// use screenshot_core::capture::ImageBuffer;
     ///
     /// let dynamic = DynamicImage::new_rgb8(100, 100);
     /// let buffer = ImageBuffer::new(dynamic);
@@ -75,7 +75,7 @@ impl ImageBuffer {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::capture::ImageBuffer;
+    /// use screenshot_core::capture::ImageBuffer;
     ///
     /// let img = ImageBuffer::from_test_pattern(1920, 1080);
     ///
@@ -128,7 +128,7 @@ impl ImageBuffer {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::{capture::ImageBuffer, model::Region};
+    /// use screenshot_core::{capture::ImageBuffer, model::Region};
     ///
     /// let img = ImageBuffer::from_test_pattern(1920, 1080);
     ///
@@ -173,7 +173,7 @@ impl ImageBuffer {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::capture::ImageBuffer;
+    /// use screenshot_core::capture::ImageBuffer;
     ///
     /// let img = ImageBuffer::from_test_pattern(1920, 1080);
     /// assert_eq!(img.dimensions(), (1920, 1080));
@@ -200,7 +200,7 @@ impl ImageBuffer {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::capture::ImageBuffer;
+    /// use screenshot_core::capture::ImageBuffer;
     ///
     /// let img = ImageBuffer::from_test_pattern(100, 100);
     /// let rgba = img.to_rgba8();
@@ -218,7 +218,7 @@ impl ImageBuffer {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::capture::ImageBuffer;
+    /// use screenshot_core::capture::ImageBuffer;
     ///
     /// let img = ImageBuffer::from_test_pattern(100, 100);
     /// let bytes = img.as_bytes();
@@ -242,7 +242,7 @@ impl ImageBuffer {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::capture::ImageBuffer;
+    /// use screenshot_core::capture::ImageBuffer;
     ///
     /// // Create a 1920x1080 test pattern
     /// let img = ImageBuffer::from_test_pattern(1920, 1080);

@@ -134,7 +134,7 @@ impl CaptureError {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::{
+    /// use screenshot_core::{
     ///     error::CaptureError,
     ///     model::{BackendType, WindowSelector},
     /// };
@@ -225,16 +225,19 @@ impl CaptureError {
             }
             CaptureError::KeyringUnavailable { .. } => {
                 "Platform keyring is not available. Ensure gnome-keyring, kwallet, or similar is \
-                 installed and running. Falling back to encrypted file storage."
+                 installed and running. To enable encrypted file storage fallback, build with the \
+                 file-token-fallback feature enabled (e.g., cargo build --features file-token-fallback)."
             }
             CaptureError::KeyringOperationFailed { operation, .. } => match operation.as_str() {
                 "store" => {
                     "Failed to store token in keyring. Check keyring service is running and \
-                     accessible. Will attempt file fallback."
+                     accessible. If file-token-fallback feature is enabled, will attempt file \
+                     fallback."
                 }
                 "retrieve" => {
                     "Failed to retrieve token from keyring. The keyring service may be locked or \
-                     inaccessible. Try unlocking your keyring."
+                     inaccessible. Try unlocking your keyring. If file-token-fallback feature is \
+                     enabled, will check file storage."
                 }
                 "delete" => {
                     "Failed to delete token from keyring. This may leave stale tokens. Check \

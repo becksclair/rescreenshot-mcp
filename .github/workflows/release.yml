@@ -62,7 +62,7 @@ jobs:
             libpipewire-0.3-dev libspa-0.2-dev
 
       - name: Build Binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p screenshot-mcp-server
 
       - name: Prepare Asset
         shell: bash

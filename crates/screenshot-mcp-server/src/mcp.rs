@@ -14,16 +14,14 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::mcp_content::build_capture_result;
 #[cfg(target_os = "linux")]
-use crate::capture::WaylandBackend;
-use crate::{
+use screenshot_core::capture::WaylandBackend;
+use screenshot_core::{
     capture::{CaptureFacade, MockBackend},
     error::CaptureError,
     model::{CaptureOptions, HealthCheckResponse, ImageFormat, SourceType, WindowSelector},
-    util::{
-        detect::detect_platform, encode::encode_image, mcp_content::build_capture_result,
-        temp_files::TempFileManager,
-    },
+    util::{detect::detect_platform, encode::encode_image, temp_files::TempFileManager},
 };
 
 /// Parameters for the capture_window tool
@@ -160,9 +158,10 @@ impl ScreenshotMcpServer {
     /// ```
     /// use std::sync::Arc;
     ///
-    /// use screenshot_mcp::{
-    ///     capture::MockBackend, mcp::ScreenshotMcpServer, util::temp_files::TempFileManager,
+    /// use screenshot_core::{
+    ///     capture::MockBackend, util::temp_files::TempFileManager,
     /// };
+    /// use screenshot_mcp_server::mcp::ScreenshotMcpServer;
     ///
     /// let backend = Arc::new(MockBackend::new());
     /// let temp_files = Arc::new(TempFileManager::new());
@@ -185,7 +184,7 @@ impl ScreenshotMcpServer {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::mcp::ScreenshotMcpServer;
+    /// use screenshot_mcp_server::mcp::ScreenshotMcpServer;
     ///
     /// let server = ScreenshotMcpServer::new_with_mock();
     /// ```
@@ -608,7 +607,7 @@ impl ServerHandler for ScreenshotMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::WindowInfo;
+    use screenshot_core::model::WindowInfo;
 
     #[test]
     fn test_server_creation_with_mock() {

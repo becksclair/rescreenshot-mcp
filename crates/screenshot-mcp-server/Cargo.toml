@@ -1,0 +1,43 @@
+[package]
+name = "screenshot-mcp-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP server for screenshot capture (thin protocol layer)"
+keywords = ["mcp", "screenshot", "wayland", "screen-capture"]
+categories = ["api-bindings"]
+
+[dependencies]
+# Core library
+screenshot-core = { path = "../screenshot-core" }
+
+# MCP SDK
+rmcp.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Base64 encoding (for MCP image content)
+base64.workspace = true
+
+# Date/time for timestamps
+chrono.workspace = true
+
+[[bin]]
+name = "screenshot-mcp"
+path = "src/main.rs"
