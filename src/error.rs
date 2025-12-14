@@ -35,7 +35,7 @@ pub enum CaptureError {
         /// Platform where permission was denied
         platform: String,
         /// Backend that denied permission
-        backend:  BackendType,
+        backend: BackendType,
     },
 
     /// Image encoding failed
@@ -60,7 +60,7 @@ pub enum CaptureError {
         /// Name of the invalid parameter
         parameter: String,
         /// Reason why it's invalid
-        reason:    String,
+        reason: String,
     },
 
     /// Requested backend is not available
@@ -91,7 +91,7 @@ pub enum CaptureError {
         /// The operation that failed (e.g., "store", "retrieve", "delete")
         operation: String,
         /// Reason for the failure
-        reason:    String,
+        reason: String,
     },
 
     /// Token not found for the given source ID
@@ -314,7 +314,7 @@ mod tests {
     fn test_permission_denied_wayland() {
         let error = CaptureError::PermissionDenied {
             platform: "linux".to_string(),
-            backend:  BackendType::Wayland,
+            backend: BackendType::Wayland,
         };
 
         let msg = error.to_string();
@@ -330,7 +330,7 @@ mod tests {
     fn test_permission_denied_windows() {
         let error = CaptureError::PermissionDenied {
             platform: "windows".to_string(),
-            backend:  BackendType::Windows,
+            backend: BackendType::Windows,
         };
 
         let hint = error.remediation_hint();
@@ -342,7 +342,7 @@ mod tests {
     fn test_permission_denied_macos() {
         let error = CaptureError::PermissionDenied {
             platform: "macos".to_string(),
-            backend:  BackendType::MacOS,
+            backend: BackendType::MacOS,
         };
 
         let hint = error.remediation_hint();
@@ -397,7 +397,7 @@ mod tests {
     fn test_invalid_parameter_quality() {
         let error = CaptureError::InvalidParameter {
             parameter: "quality".to_string(),
-            reason:    "value 150 exceeds maximum 100".to_string(),
+            reason: "value 150 exceeds maximum 100".to_string(),
         };
 
         let msg = error.to_string();
@@ -412,7 +412,7 @@ mod tests {
     fn test_invalid_parameter_scale() {
         let error = CaptureError::InvalidParameter {
             parameter: "scale".to_string(),
-            reason:    "value 5.0 exceeds maximum 2.0".to_string(),
+            reason: "value 5.0 exceeds maximum 2.0".to_string(),
         };
 
         let hint = error.remediation_hint();

@@ -11,5 +11,5 @@ pub mod temp_files;
 #[cfg(feature = "image-processing")]
 pub mod mcp_content;
 
-#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
+#[cfg(target_os = "linux")]
 pub mod key_store;

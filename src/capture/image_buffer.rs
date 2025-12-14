@@ -144,7 +144,7 @@ impl ImageBuffer {
         if region.x >= img_width || region.y >= img_height {
             return Err(CaptureError::InvalidParameter {
                 parameter: "region".to_string(),
-                reason:    format!(
+                reason: format!(
                     "Region origin ({}, {}) is outside image bounds ({}x{})",
                     region.x, region.y, img_width, img_height
                 ),
@@ -154,7 +154,7 @@ impl ImageBuffer {
         if region.x + region.width > img_width || region.y + region.height > img_height {
             return Err(CaptureError::InvalidParameter {
                 parameter: "region".to_string(),
-                reason:    format!(
+                reason: format!(
                     "Region ({}x{} at {},{}) extends beyond image bounds ({}x{})",
                     region.width, region.height, region.x, region.y, img_width, img_height
                 ),
@@ -180,6 +180,16 @@ impl ImageBuffer {
     /// ```
     pub fn dimensions(&self) -> (u32, u32) {
         self.inner.dimensions()
+    }
+
+    /// Returns the image width in pixels
+    pub fn width(&self) -> u32 {
+        self.dimensions().0
+    }
+
+    /// Returns the image height in pixels
+    pub fn height(&self) -> u32 {
+        self.dimensions().1
     }
 
     /// Converts the image to RGBA8 format

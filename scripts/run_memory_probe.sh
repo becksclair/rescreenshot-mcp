@@ -54,7 +54,7 @@ echo ""
 
 # Build release binary
 echo -e "${BLUE}Building release binary...${NC}"
-cargo build --bin measure-capture --features perf-tests,linux-wayland --release --quiet
+cargo build --bin measure-capture --features perf-tests --release --quiet
 echo -e "${GREEN}✓ Build complete${NC}"
 echo ""
 

@@ -201,7 +201,7 @@ pub fn encode_jpeg(buffer: &ImageBuffer, quality: u8) -> CaptureResult<Vec<u8>> 
     if width == 0 || height == 0 {
         return Err(CaptureError::InvalidParameter {
             parameter: "dimensions".to_string(),
-            reason:    "Image dimensions must be > 0".to_string(),
+            reason: "Image dimensions must be > 0".to_string(),
         });
     }
 

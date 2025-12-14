@@ -4,12 +4,61 @@ All notable changes to screenshot-mcp are documented in this file.
 
 ## [Unreleased]
 
-### Planned (M4-M6)
+### Planned (M5)
 
-- Windows Graphics Capture backend
 - macOS ScreenCaptureKit backend
-- Comprehensive documentation and release
-- CI/CD pipeline and GitHub releases
+
+---
+
+## [M6a] - 2025-12-14
+
+### Added - Documentation & CI/CD
+
+**Documentation:**
+- New `docs/USER_GUIDE.md`: Comprehensive workflows for all platforms.
+- New `docs/LINUX_SETUP.md` & `docs/WINDOWS_SETUP.md`: Detailed installation guides.
+- New `docs/TROUBLESHOOTING.md`: 20+ common issues and solutions.
+- New `docs/PERFORMANCE.md`: Tuning guide for latency and message size.
+- Updated `README.md` with M4 status and better navigation.
+- Updated `docs/API.md` to reflect M4 completion (version 0.4.0).
+
+**CI/CD:**
+- Added Fedora 39 container testing to GitHub Actions.
+- Added code coverage reporting via `cargo-llvm-cov` and Codecov.
+- Added automated release workflow:
+  - Triggers on `v*` tags.
+  - Builds Linux (x86_64) and Windows (x86_64) binaries.
+  - Generates SHA256 checksums.
+  - Creates GitHub Release with artifacts.
+
+---
+
+## [M4] - 2025-12-01
+
+### Added - Windows Backend
+
+**Core Features:**
+- **Windows Graphics Capture (WGC):** High-performance capture using DirectX/WGC.
+- **Window Enumeration:** Win32 `EnumWindows` integration.
+- **Matching Strategies:**
+  - Regex matching on titles.
+  - Fuzzy matching (SkimMatcherV2).
+  - Exact class name matching.
+  - Exact executable name matching.
+- **Monitor Capture:** Full display capture support.
+- **Transformations:** Region cropping and scaling support.
+
+**Technical Details:**
+- Uses `windows-capture` crate for WGC interaction.
+- Uses `windows-sys` for Win32 API calls.
+- Fully async and thread-safe implementation.
+- Handles Windows 10 1803+ requirement checks.
+- Zero-copy buffer handling where possible (nopadding buffers).
+
+**Quality Metrics:**
+- Verified by `tests/windows_integration_tests.rs`.
+- Zero clippy warnings.
+- Robust error handling for invalid handles and closed windows.
 
 ---
 
@@ -251,8 +300,3 @@ This project follows [Semantic Versioning](https://semver.org/):
 - **MAJOR**: Breaking changes to public API
 - **MINOR**: New features (backward compatible)
 - **PATCH**: Bug fixes (backward compatible)
-
----
-
-**Current Version:** M3 (1.0.0-alpha)
-**Next Release:** M4 (Windows backend)

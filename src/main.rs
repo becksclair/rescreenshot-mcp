@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use rmcp::{ServiceExt, transport::stdio};
 use screenshot_mcp::{
-    capture::MockBackend, mcp::ScreenshotMcpServer, util::temp_files::TempFileManager,
+    capture::create_default_backend, mcp::ScreenshotMcpServer, util::temp_files::TempFileManager,
 };
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -22,6 +22,14 @@ async fn main() -> Result<()> {
             EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| EnvFilter::new("screenshot_mcp=info")),
         )
+        // MCP uses stdout for JSON-RPC frames. Any non-protocol bytes on stdout
+        // (like human logs or ANSI color codes) will corrupt the stream and
+        // cause clients to fail parsing JSON. Keep logs on stderr.
+        .with_writer(std::io::stderr)
+        // Some environments force ANSI styling even for non-TTY outputs; make
+        // absolutely sure we never emit escape codes that could get mixed into
+        // client parsing.
+        .with_ansi(false)
         .with_target(false)
         .with_thread_ids(false)
         .with_line_number(false)
@@ -31,9 +39,9 @@ async fn main() -> Result<()> {
     info!("Protocol: Model Context Protocol (MCP)");
     info!("Transport: stdio");
 
-    // Initialize backend (MockBackend for M1)
-    let backend = Arc::new(MockBackend::new());
-    info!("Backend initialized: MockBackend (M1 testing)");
+    // Initialize backend (auto-detected by platform/session)
+    let backend = create_default_backend()?;
+    info!("Backend initialized (auto-detected)");
 
     // Initialize temp file manager
     let temp_files = Arc::new(TempFileManager::new());

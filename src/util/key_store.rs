@@ -36,7 +36,7 @@
 //! store.delete_token("window-123").unwrap();
 //! ```
 
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -45,19 +45,17 @@ use std::{
     sync::{Arc, OnceLock, RwLock},
 };
 
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 use chacha20poly1305::{
     ChaCha20Poly1305,
     aead::{Aead, KeyInit},
 };
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 use hkdf::Hkdf;
-#[cfg(feature = "linux-wayland")]
-use rand::RngCore;
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 use sha2::Sha256;
 
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 use crate::error::{CaptureError, CaptureResult};
 
 /// Thread-safe secure token storage with keyring-first approach
@@ -90,27 +88,27 @@ use crate::error::{CaptureError, CaptureResult};
 /// store.delete_token("my-source").unwrap();
 /// assert!(!store.has_token("my-source").unwrap());
 /// ```
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct KeyStore {
     /// Service name for keyring entries
-    service_name:      String,
+    service_name: String,
     /// Lazy detection of platform keyring availability
     keyring_available: Arc<OnceLock<bool>>,
     /// In-memory cache for file-based storage
-    file_store:        Arc<RwLock<HashMap<String, String>>>,
+    file_store: Arc<RwLock<HashMap<String, String>>>,
     /// Path to encrypted token file (if using file fallback)
-    file_path:         Option<PathBuf>,
+    file_path: Option<PathBuf>,
     /// Cached encryption key for file operations
-    encryption_key:    Option<[u8; 32]>,
+    encryption_key: Option<[u8; 32]>,
     /// In-memory index of all known source IDs (tokens may live in keyring or
     /// file)
-    source_index:      Arc<RwLock<HashSet<String>>>,
+    source_index: Arc<RwLock<HashSet<String>>>,
     /// Path to persisted source ID index
-    index_path:        PathBuf,
+    index_path: PathBuf,
 }
 
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 impl KeyStore {
     /// Creates a new KeyStore instance
     ///
@@ -198,17 +196,13 @@ impl KeyStore {
 
         // Get or initialize keyring availability on first access
         let use_keyring = *self.keyring_available.get_or_init(|| {
-            // First access - try keyring operation to detect availability
-            match self.store_in_keyring(&key, token) {
-                Ok(()) => {
-                    tracing::info!("Platform keyring is available and working");
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("Keyring unavailable ({}), using encrypted file storage", e);
-                    false
-                }
-            }
+            // First access - do a roundtrip to detect if keyring is actually usable.
+            //
+            // Some environments (notably headless CI/containers) can report success on
+            // writes but fail to retrieve later. We treat that as "keyring
+            // unavailable" and fall back to encrypted file storage to keep
+            // behavior deterministic.
+            self.detect_keyring_roundtrip(&key, token)
         });
 
         // If keyring was initialized as true, it means the first store succeeded
@@ -429,12 +423,50 @@ impl KeyStore {
         format!("{}-{}", self.service_name, source_id)
     }
 
+    /// Detect whether the platform keyring supports a store+retrieve roundtrip.
+    ///
+    /// This is intentionally conservative: if we cannot reliably read back what
+    /// we wrote, we treat the keyring as unavailable and fall back to
+    /// file-based storage.
+    fn detect_keyring_roundtrip(&self, key: &str, token: &str) -> bool {
+        match self.store_in_keyring(key, token) {
+            Ok(()) => match self.retrieve_from_keyring(key) {
+                Ok(Some(stored)) if stored == token => {
+                    tracing::info!("Platform keyring is available and supports roundtrip read");
+                    let _ = self.delete_from_keyring(key);
+                    true
+                }
+                Ok(other) => {
+                    tracing::warn!(
+                        "Keyring roundtrip failed (expected token, got {:?}); falling back to \
+                         file storage",
+                        other
+                    );
+                    let _ = self.delete_from_keyring(key);
+                    false
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Keyring roundtrip read failed ({}); falling back to file storage",
+                        e
+                    );
+                    let _ = self.delete_from_keyring(key);
+                    false
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Keyring unavailable ({}), using encrypted file storage", e);
+                false
+            }
+        }
+    }
+
     /// Stores token in platform keyring
     fn store_in_keyring(&self, key: &str, token: &str) -> CaptureResult<()> {
         let entry = keyring::Entry::new(&self.service_name, key).map_err(|e| {
             CaptureError::KeyringOperationFailed {
                 operation: "store".to_string(),
-                reason:    e.to_string(),
+                reason: e.to_string(),
             }
         })?;
 
@@ -442,7 +474,7 @@ impl KeyStore {
             .set_password(token)
             .map_err(|e| CaptureError::KeyringOperationFailed {
                 operation: "store".to_string(),
-                reason:    e.to_string(),
+                reason: e.to_string(),
             })?;
 
         Ok(())
@@ -453,7 +485,7 @@ impl KeyStore {
         let entry = keyring::Entry::new(&self.service_name, key).map_err(|e| {
             CaptureError::KeyringOperationFailed {
                 operation: "retrieve".to_string(),
-                reason:    e.to_string(),
+                reason: e.to_string(),
             }
         })?;
 
@@ -462,7 +494,7 @@ impl KeyStore {
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(CaptureError::KeyringOperationFailed {
                 operation: "retrieve".to_string(),
-                reason:    e.to_string(),
+                reason: e.to_string(),
             }),
         }
     }
@@ -472,16 +504,16 @@ impl KeyStore {
         let entry = keyring::Entry::new(&self.service_name, key).map_err(|e| {
             CaptureError::KeyringOperationFailed {
                 operation: "delete".to_string(),
-                reason:    e.to_string(),
+                reason: e.to_string(),
             }
         })?;
 
-        match entry.delete_password() {
+        match entry.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()), // Already deleted
             Err(e) => Err(CaptureError::KeyringOperationFailed {
                 operation: "delete".to_string(),
-                reason:    e.to_string(),
+                reason: e.to_string(),
             }),
         }
     }
@@ -725,7 +757,14 @@ impl KeyStore {
 
         // Generate random 12-byte nonce (CRITICAL SECURITY FIX)
         let mut nonce_bytes = [0u8; 12];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        {
+            use rand::TryRngCore as _;
+            let mut rng = rand::rngs::OsRng;
+            rng.try_fill_bytes(&mut nonce_bytes)
+                .map_err(|e| CaptureError::EncryptionFailed {
+                    reason: format!("Failed to generate secure random nonce: {}", e),
+                })?;
+        }
         let nonce = &nonce_bytes.into();
 
         let ciphertext =
@@ -903,7 +942,14 @@ impl KeyStore {
         })?;
 
         let mut nonce_bytes = [0u8; 12];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        {
+            use rand::TryRngCore as _;
+            let mut rng = rand::rngs::OsRng;
+            rng.try_fill_bytes(&mut nonce_bytes)
+                .map_err(|e| CaptureError::EncryptionFailed {
+                    reason: format!("Failed to generate secure random nonce: {}", e),
+                })?;
+        }
         let nonce = &nonce_bytes.into();
 
         let ciphertext =
@@ -934,7 +980,7 @@ impl KeyStore {
     }
 }
 
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 impl Default for KeyStore {
     fn default() -> Self {
         Self::new()
@@ -942,7 +988,7 @@ impl Default for KeyStore {
 }
 
 #[cfg(test)]
-#[cfg(feature = "linux-wayland")]
+#[cfg(target_os = "linux")]
 mod tests {
     use super::*;
 

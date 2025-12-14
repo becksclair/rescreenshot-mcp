@@ -20,11 +20,11 @@ build-all:
 
 # Build Wayland backend
 build-wayland:
-    cargo build --features linux-wayland --release
+    cargo build --release
 
 # Build performance measurement tool
 build-perf:
-    cargo build --bin measure-capture --features perf-tests,linux-wayland --release
+    cargo build --bin measure-capture --features perf-tests --release
 
 # Clean build artifacts
 clean:
@@ -52,7 +52,7 @@ test-lib:
 
 # Run Wayland backend tests
 test-wayland:
-    cargo test --features linux-wayland
+    cargo test
 
 # Run tests with performance utilities
 test-perf:
@@ -64,7 +64,7 @@ test-one TEST:
 
 # Run integration tests (requires live Wayland session)
 test-integration:
-    cargo test --features linux-wayland --test error_integration_tests -- --ignored --nocapture
+    cargo test --test error_integration_tests -- --ignored --nocapture
 
 # Run Wayland integration test script
 test-wayland-script TEST="":
@@ -299,6 +299,41 @@ ci:
     cargo test --all-features
     @echo ""
     @echo "=== All CI checks passed ==="
+
+# Run the GitHub Actions workflow locally via nektos/act (Linux-only).
+#
+# Prereqs:
+# - Install act: https://nektosact.com/
+# - Docker available (Docker Desktop / Colima / etc.)
+ci-act-list:
+    act -l
+
+ci-act-linux:
+    @echo "=== Running GitHub Actions CI locally (Linux via act) ==="
+    act -j test --matrix os:ubuntu-latest
+    act -j build --matrix os:ubuntu-latest
+
+ci-act-linux-test:
+    act -j test --matrix os:ubuntu-latest
+
+ci-act-linux-build:
+    act -j build --matrix os:ubuntu-latest
+
+ci-act-windows:
+    @echo "=== Attempting Windows CI via act (expected to fail) ==="
+    @echo "act runs Linux containers; it cannot emulate GitHub-hosted windows-latest runners."
+    @echo "Use real Windows (native) for parity. This command is intentionally 'try and fail'."
+    @echo "Forcing a non-zero exit to avoid false 'success' from skipped jobs."
+    act -j test --matrix os:windows-latest -P windows-latest=ghcr.io/catthehacker/does-not-exist:act-latest
+    act -j build --matrix os:windows-latest -P windows-latest=ghcr.io/catthehacker/does-not-exist:act-latest
+
+ci-act-macos:
+    @echo "=== Attempting macOS CI via act (expected to fail) ==="
+    @echo "act runs Linux containers; it cannot emulate GitHub-hosted macos-latest runners."
+    @echo "Use real macOS (native) for parity. This command is intentionally 'try and fail'."
+    @echo "Forcing a non-zero exit to avoid false 'success' from skipped jobs."
+    act -j test --matrix os:macos-latest -P macos-latest=ghcr.io/catthehacker/does-not-exist:act-latest
+    act -j build --matrix os:macos-latest -P macos-latest=ghcr.io/catthehacker/does-not-exist:act-latest
 
 # ============================================================================
 # Release

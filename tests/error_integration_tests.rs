@@ -18,7 +18,7 @@
 // Import shared test utilities
 mod common;
 
-#[cfg(all(test, target_os = "linux", feature = "linux-wayland"))]
+#[cfg(all(test, target_os = "linux"))]
 mod wayland_error_integration {
     use std::sync::Arc;
 
@@ -224,9 +224,8 @@ mod wayland_error_integration {
     }
 }
 
-#[cfg(not(all(target_os = "linux", feature = "linux-wayland")))]
+#[cfg(not(target_os = "linux"))]
 #[test]
-fn integration_tests_require_wayland_feature() {
-    // Placeholder test to show feature requirement
-    println!("Integration tests require --features linux-wayland");
+fn integration_tests_require_linux() {
+    println!("Wayland integration tests only run on Linux.");
 }

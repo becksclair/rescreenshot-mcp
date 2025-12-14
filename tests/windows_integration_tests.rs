@@ -8,14 +8,14 @@
 //!
 //! ```powershell
 //! # Run all Windows integration tests with full output
-//! cargo test --test windows_integration_tests --features windows-backend -- --ignored --nocapture
+//! cargo test --test windows_integration_tests -- --ignored --nocapture
 //!
 //! # Run specific test
-//! cargo test --test windows_integration_tests test_capture_window_real --features windows-backend -- --ignored --nocapture
+//! cargo test --test windows_integration_tests test_capture_window_real -- --ignored --nocapture
 //!
 //! # Run with debug logging
 //! set RUST_LOG=screenshot_mcp=debug
-//! cargo test --test windows_integration_tests --features windows-backend -- --ignored --nocapture
+//! cargo test --test windows_integration_tests -- --ignored --nocapture
 //! ```
 //!
 //! # Requirements
@@ -36,7 +36,7 @@
 //! - [ ] Verify Windows is updated (Settings > Update & Security)
 //! - [ ] Check DirectX installation (dxdiag)
 
-#![cfg(feature = "windows-backend")]
+#![cfg(target_os = "windows")]
 
 mod common;
 
@@ -172,9 +172,9 @@ async fn test_capture_with_region() {
 
     let opts = CaptureOptions {
         region: Some(Region {
-            x:      10,
-            y:      10,
-            width:  100,
+            x: 10,
+            y: 10,
+            width: 100,
             height: 100,
         }),
         ..Default::default()
@@ -483,9 +483,9 @@ async fn test_capture_window_region_dimensions() {
 
     let opts = CaptureOptions {
         region: Some(Region {
-            x:      0,
-            y:      0,
-            width:  region_width,
+            x: 0,
+            y: 0,
+            width: region_width,
             height: region_height,
         }),
         ..Default::default()
@@ -766,10 +766,13 @@ async fn test_visual_capture_with_options() {
     // 1. Capture at half scale
     println!("\n--- Half Scale (0.5x) ---");
     let scaled_image = ctx
-        .capture_window(&handle, &CaptureOptions {
-            scale: 0.5,
-            ..Default::default()
-        })
+        .capture_window(
+            &handle,
+            &CaptureOptions {
+                scale: 0.5,
+                ..Default::default()
+            },
+        )
         .await
         .expect("Failed to capture scaled");
 
@@ -781,10 +784,13 @@ async fn test_visual_capture_with_options() {
     // 2. Capture with cursor
     println!("\n--- With Cursor ---");
     let cursor_image = ctx
-        .capture_window(&handle, &CaptureOptions {
-            include_cursor: true,
-            ..Default::default()
-        })
+        .capture_window(
+            &handle,
+            &CaptureOptions {
+                include_cursor: true,
+                ..Default::default()
+            },
+        )
         .await
         .expect("Failed to capture with cursor");
 
@@ -807,15 +813,18 @@ async fn test_visual_capture_with_options() {
     let region_y = (fh.saturating_sub(region_h)) / 2;
 
     let region_image = ctx
-        .capture_window(&handle, &CaptureOptions {
-            region: Some(Region {
-                x:      region_x,
-                y:      region_y,
-                width:  region_w,
-                height: region_h,
-            }),
-            ..Default::default()
-        })
+        .capture_window(
+            &handle,
+            &CaptureOptions {
+                region: Some(Region {
+                    x: region_x,
+                    y: region_y,
+                    width: region_w,
+                    height: region_h,
+                }),
+                ..Default::default()
+            },
+        )
         .await
         .expect("Failed to capture region");
 

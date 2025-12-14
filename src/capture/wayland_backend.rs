@@ -170,7 +170,6 @@ impl WaylandBackend {
     ///
     /// This uses blocking PipeWire API with a timeout for simplicity. A frame
     /// should arrive immediately since the portal session is already active.
-    #[cfg(feature = "linux-wayland")]
     async fn capture_pipewire_frame(node_id: u32) -> CaptureResult<image::DynamicImage> {
         use pipewire::{
             context::Context,
@@ -220,11 +219,15 @@ impl WaylandBackend {
             })?;
 
             // Create stream with callbacks
-            let stream = Stream::new(&core, "screenshot-mcp", properties! {
-                *keys::MEDIA_TYPE => "Video",
-                *keys::MEDIA_CATEGORY => "Capture",
-                *keys::MEDIA_ROLE => "Screen",
-            })
+            let stream = Stream::new(
+                &core,
+                "screenshot-mcp",
+                properties! {
+                    *keys::MEDIA_TYPE => "Video",
+                    *keys::MEDIA_CATEGORY => "Capture",
+                    *keys::MEDIA_ROLE => "Screen",
+                },
+            )
             .map_err(|e| {
                 tracing::error!("Failed to create PipeWire Stream: {}", e);
                 CaptureError::BackendNotAvailable {
@@ -602,7 +605,7 @@ impl WaylandBackend {
                         tracing::error!("Failed to select portal sources: {}", e);
                         CaptureError::PermissionDenied {
                             platform: "Linux".to_string(),
-                            backend:  BackendType::Wayland,
+                            backend: BackendType::Wayland,
                         }
                     })?;
 
@@ -617,7 +620,7 @@ impl WaylandBackend {
                         if err_str.contains("cancel") || err_str.contains("denied") {
                             CaptureError::PermissionDenied {
                                 platform: "Linux".to_string(),
-                                backend:  BackendType::Wayland,
+                                backend: BackendType::Wayland,
                             }
                         } else {
                             CaptureError::PortalUnavailable {
@@ -631,7 +634,7 @@ impl WaylandBackend {
                     tracing::error!("Failed to get portal response: {}", e);
                     CaptureError::PermissionDenied {
                         platform: "Linux".to_string(),
-                        backend:  BackendType::Wayland,
+                        backend: BackendType::Wayland,
                     }
                 })?;
 
@@ -640,7 +643,7 @@ impl WaylandBackend {
                 if streams.is_empty() {
                     return Err(CaptureError::PermissionDenied {
                         platform: "Linux".to_string(),
-                        backend:  BackendType::Wayland,
+                        backend: BackendType::Wayland,
                     });
                 }
 
@@ -650,7 +653,7 @@ impl WaylandBackend {
                         .restore_token()
                         .ok_or_else(|| CaptureError::PermissionDenied {
                             platform: "Linux".to_string(),
-                            backend:  BackendType::Wayland,
+                            backend: BackendType::Wayland,
                         })?;
 
                 // Store single token for the source_id
@@ -665,8 +668,8 @@ impl WaylandBackend {
                 // Step 7: Return result
                 Ok(PrimeConsentResult {
                     primary_source_id: source_id.to_string(),
-                    all_source_ids:    vec![source_id.to_string()],
-                    num_streams:       streams.len(),
+                    all_source_ids: vec![source_id.to_string()],
+                    num_streams: streams.len(),
                 })
             },
             Self::DEFAULT_PORTAL_TIMEOUT_SECS,
@@ -684,9 +687,9 @@ pub struct PrimeConsentResult {
     /// Primary source ID (for single stream or first of multiple)
     pub primary_source_id: String,
     /// All source IDs (includes primary)
-    pub all_source_ids:    Vec<String>,
+    pub all_source_ids: Vec<String>,
     /// Number of streams/sources captured
-    pub num_streams:       usize,
+    pub num_streams: usize,
 }
 
 #[async_trait]
@@ -769,7 +772,7 @@ impl CaptureFacade for WaylandBackend {
         {
             return Err(CaptureError::InvalidParameter {
                 parameter: "selector".to_string(),
-                reason:    "At least one selector field must be specified".to_string(),
+                reason: "At least one selector field must be specified".to_string(),
             });
         }
 
@@ -780,7 +783,7 @@ impl CaptureFacade for WaylandBackend {
                 if source_id.is_empty() {
                     return Err(CaptureError::InvalidParameter {
                         parameter: "exe".to_string(),
-                        reason:    "Wayland source ID cannot be empty (format: \
+                        reason: "Wayland source ID cannot be empty (format: \
                                     'wayland:<source-id>')"
                             .to_string(),
                     });
@@ -930,7 +933,7 @@ impl CaptureFacade for WaylandBackend {
                         if err_str.contains("cancel") || err_str.contains("denied") {
                             CaptureError::PermissionDenied {
                                 platform: "Linux".to_string(),
-                                backend:  BackendType::Wayland,
+                                backend: BackendType::Wayland,
                             }
                         } else {
                             CaptureError::PortalUnavailable {
@@ -944,7 +947,7 @@ impl CaptureFacade for WaylandBackend {
                     tracing::error!("Failed to get portal response: {}", e);
                     CaptureError::PermissionDenied {
                         platform: "Linux".to_string(),
-                        backend:  BackendType::Wayland,
+                        backend: BackendType::Wayland,
                     }
                 })?;
 
@@ -981,15 +984,7 @@ impl CaptureFacade for WaylandBackend {
                 );
 
                 // Step 7: Capture frame from PipeWire
-                #[cfg(feature = "linux-wayland")]
                 let raw_image = Self::capture_pipewire_frame(node_id).await?;
-
-                #[cfg(not(feature = "linux-wayland"))]
-                let raw_image: image::DynamicImage = {
-                    return Err(CaptureError::BackendNotAvailable {
-                        backend: BackendType::Wayland,
-                    });
-                };
 
                 tracing::debug!("Raw image captured: {:?}", raw_image.dimensions());
 
@@ -1108,7 +1103,7 @@ impl CaptureFacade for WaylandBackend {
                         tracing::error!("Failed to select sources for display capture: {}", e);
                         CaptureError::PermissionDenied {
                             platform: "Linux".to_string(),
-                            backend:  BackendType::Wayland,
+                            backend: BackendType::Wayland,
                         }
                     })?;
 
@@ -1124,7 +1119,7 @@ impl CaptureFacade for WaylandBackend {
                         if err_str.contains("cancel") || err_str.contains("denied") {
                             CaptureError::PermissionDenied {
                                 platform: "Linux".to_string(),
-                                backend:  BackendType::Wayland,
+                                backend: BackendType::Wayland,
                             }
                         } else {
                             CaptureError::PortalUnavailable {
@@ -1138,7 +1133,7 @@ impl CaptureFacade for WaylandBackend {
                     tracing::error!("Failed to get display capture portal response: {}", e);
                     CaptureError::PermissionDenied {
                         platform: "Linux".to_string(),
-                        backend:  BackendType::Wayland,
+                        backend: BackendType::Wayland,
                     }
                 })?;
 
@@ -1149,7 +1144,7 @@ impl CaptureFacade for WaylandBackend {
                 if streams.is_empty() {
                     return Err(CaptureError::PermissionDenied {
                         platform: "Linux".to_string(),
-                        backend:  BackendType::Wayland,
+                        backend: BackendType::Wayland,
                     });
                 }
 
@@ -1163,15 +1158,7 @@ impl CaptureFacade for WaylandBackend {
                 );
 
                 // Step 6: Capture frame (REUSE existing helper)
-                #[cfg(feature = "linux-wayland")]
                 let raw_image = Self::capture_pipewire_frame(node_id).await?;
-
-                #[cfg(not(feature = "linux-wayland"))]
-                let raw_image: image::DynamicImage = {
-                    return Err(CaptureError::BackendNotAvailable {
-                        backend: BackendType::Wayland,
-                    });
-                };
 
                 tracing::debug!("Display capture raw image: {:?}", raw_image.dimensions());
 
@@ -1217,11 +1204,11 @@ impl CaptureFacade for WaylandBackend {
     /// A [`Capabilities`] struct describing Wayland-specific features.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            supports_cursor:          true,  // Portal supports cursor option
-            supports_region:          true,  // Post-capture cropping
-            supports_wayland_restore: true,  // Restore tokens for headless capture
-            supports_window_capture:  false, // Wayland security limitation
-            supports_display_capture: true,  // Via portal picker
+            supports_cursor: true,          // Portal supports cursor option
+            supports_region: true,          // Post-capture cropping
+            supports_wayland_restore: true, // Restore tokens for headless capture
+            supports_window_capture: false, // Wayland security limitation
+            supports_display_capture: true, // Via portal picker
         }
     }
 
@@ -1458,9 +1445,10 @@ mod tests {
 
         let result = WaylandBackend::with_timeout(slow_operation, 1).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CaptureError::CaptureTimeout {
-            duration_ms: 1000,
-        }));
+        assert!(matches!(
+            result.unwrap_err(),
+            CaptureError::CaptureTimeout { duration_ms: 1000 }
+        ));
     }
 
     #[tokio::test]
@@ -1491,9 +1479,9 @@ mod tests {
         // Create options with a region
         let opts = CaptureOptions {
             region: Some(Region {
-                x:      100,
-                y:      100,
-                width:  200,
+                x: 100,
+                y: 100,
+                width: 200,
                 height: 200,
             }),
             ..Default::default()
@@ -1556,9 +1544,9 @@ mod tests {
 
         let opts = CaptureOptions {
             region: Some(Region {
-                x:      50,
-                y:      50,
-                width:  100,
+                x: 50,
+                y: 50,
+                width: 100,
                 height: 100,
             }),
             ..Default::default()

@@ -2,9 +2,9 @@
 
 ## Project Status
 
-**Current:** M0-M4 Complete ✅ | M6a Planned | M5 Deferred
-**Code Quality:** 500+ tests passing (73 unit + 21 integration for Windows), 0 warnings, production-ready
-**Last Updated:** 2025-12-13
+**Current:** M0-M4, M6a Complete ✅ | M5 Deferred
+**Code Quality:** 500+ tests passing, 0 warnings, production-ready
+**Last Updated:** 2025-12-14
 
 **Important:** All testing and verification steps throughout this roadmap must be executed automatically by the coding agent. Manual testing steps should be converted to automated tests where possible.
 
@@ -83,6 +83,22 @@
 - [x] Windows-specific architecture documentation
 - [x] Feature gates (windows-backend)
 
+### M6a: Documentation, CI/CD, and Release (Complete)
+
+- [x] Comprehensive README (quick start, features)
+- [x] Platform-specific setup guides (Linux/Windows)
+- [x] User guide (workflow examples)
+- [x] Troubleshooting FAQ (>20 common issues)
+- [x] Performance tuning guide
+- [x] Auto-generated rustdoc (cargo doc)
+- [x] Tool schemas with JSON examples
+- [x] GitHub Actions workflow (matrix builds: Ubuntu, Fedora, Windows)
+- [x] Code coverage reporting
+- [x] Automated release workflow on tags
+- [x] Binary artifacts with checksums
+- [x] Packaging roadmap
+- [x] Install scripts (sh/ps1)
+
 ---
 
 ## Planned Milestones 📅
@@ -157,74 +173,6 @@
 - ✅ 50+ unit tests passing
 - ✅ Apple Silicon verified
 - ✅ macOS 12-14 tested
-
----
-
-### M6a: Documentation, CI/CD, and Release - Linux and Windows
-
-**Target:** Q1 2026
-**Estimated Effort:** 3-5 days
-**Dependencies:** M0-M4 complete
-
-**Scope:**
-
-#### Phase 1: User Documentation
-
-- [ ] Comprehensive README (quick start, features)
-- [ ] Platform-specific setup guides (Linux/Windows/macOS)
-- [ ] User guide (workflow examples)
-- [ ] Troubleshooting FAQ (>20 common issues)
-- [ ] Performance tuning guide
-- [ ] Configuration reference
-
-#### Phase 2: API Documentation
-
-- [ ] Auto-generated rustdoc (cargo doc)
-- [ ] Tool schemas with JSON examples
-- [ ] Error reference with remediation
-- [ ] Architecture overview
-- [ ] Backend-specific guides
-
-#### Phase 3: CI/CD Pipeline
-
-- [ ] GitHub Actions workflow (matrix builds)
-- [ ] Ubuntu 22.04 + Fedora 39 (X11/Wayland)
-- [ ] Windows Server 2022
-- [ ] macOS 13+ (deferred until M5)
-- [ ] Unit tests in CI (automated by coding agent)
-- [ ] Code coverage reporting (automated by coding agent)
-- [ ] Linting and formatting checks (automated by coding agent)
-
-#### Phase 4: Release Workflow
-
-- [ ] Automated release on tags (v*)
-- [ ] Binary artifacts for all platforms
-- [ ] Checksums and signatures
-- [ ] GitHub release notes (auto-generated)
-- [ ] Changelog management
-
-#### Phase 5: Packaging & Distribution
-
-- [ ] Linux package roadmap (deb, rpm, AUR, Nix)
-- [ ] macOS packaging (universal binary, codesigning) (deferred until M5)
-- [ ] Windows installer (MSI, Chocolatey)
-- [ ] Homebrew formula
-- [ ] Quick install script
-
-#### Phase 6: Final QA & Polish
-
-- [ ] End-to-end testing on all platforms (automated by coding agent)
-- [ ] Performance regression testing (automated by coding agent)
-- [ ] Security review
-- [ ] Accessibility review
-- [ ] License and attribution review
-
-**Deliverables:**
-- ✅ Production-ready documentation
-- ✅ Working CI/CD pipeline
-- ✅ Automated releases
-- ✅ Multi-platform binaries
-- ✅ Community communication plan
 
 ---
 
@@ -366,30 +314,21 @@
 
 ## Next Steps
 
-1. **Completed:** M4 Windows Backend ✅
-   - [x] Add edge case error handling (closed windows, permission denied)
-   - [x] Add Windows build version checking (17134+)
-   - [x] Increase unit test coverage to 50+ (now 73)
-   - [x] Write Windows-specific architecture documentation (WINDOWS_ARCHITECTURE.md)
-   - [x] Add integration tests for window/display capture with pixel validation (21 tests)
-   - [x] Refactor test infrastructure with shared helpers (`tests/common/windows_helpers.rs`)
-   - [x] Add `WindowsTestContext` fixture for cleaner test setup
-   - [x] Visual verification tests with AI screenshot analysis
+1. **Completed:** M6a (Linux + Windows docs, CI, and release) ✅
+   - [x] Docs: User/API/Perf/Troubleshooting
+   - [x] CI: Matrix (Ubuntu/Fedora/Windows) + Coverage
+   - [x] Release: Automation + Checksums
+   - [x] Install scripts
 
-2. **Immediate:** M6a (Linux + Windows docs, CI, and release)
-   - Expand CI to include Windows (and keep Linux green)
-   - Tighten README quick start + troubleshooting
-   - Define release artifacts + checksums for Linux/Windows
-
-3. **Deferred:** M5 macOS backend
+2. **Immediate:** M5 macOS backend
    - Research ScreenCaptureKit API and TCC flows
    - Create macOS test plan
    - Implement backend when macOS env is ready
 
-4. **After M5:** M6b macOS CI + packaging
+3. **Deferred:** M6b macOS CI + packaging
 
 ---
 
-**Document Version:** 2.2
-**Last Updated:** 2025-12-13
-**Next Review:** When M6a complete
+**Document Version:** 3.0 (M6a Complete)
+**Last Updated:** 2025-12-14
+**Next Review:** When M5 complete

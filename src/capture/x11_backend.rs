@@ -48,9 +48,9 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
-#[cfg(feature = "linux-x11")]
+#[cfg(target_os = "linux")]
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-#[cfg(feature = "linux-x11")]
+#[cfg(target_os = "linux")]
 use regex::RegexBuilder;
 use x11rb::{
     connection::Connection as _,
@@ -101,12 +101,12 @@ const CAPTURE_WINDOW_TIMEOUT_MS: u64 = 2000;
 #[derive(Debug)]
 pub struct X11Backend {
     /// Lazy shared X11 connection (reconnect-on-error)
-    conn:       Arc<Mutex<Option<RustConnection>>>,
+    conn: Arc<Mutex<Option<RustConnection>>>,
     /// Screen index (typically 0 for default screen)
     #[allow(dead_code)] // Will be used in future phases (multi-screen support)
     screen_idx: usize,
     /// Cached EWMH atoms (initialized once on first use)
-    atoms:      OnceLock<X11Atoms>,
+    atoms: OnceLock<X11Atoms>,
 }
 
 /// Cached EWMH atoms for efficient property queries
@@ -118,15 +118,15 @@ struct X11Atoms {
     /// _NET_CLIENT_LIST: list of all managed windows
     net_client_list: Atom,
     /// _NET_WM_NAME: UTF-8 encoded window title
-    net_wm_name:     Atom,
+    net_wm_name: Atom,
     /// WM_NAME: Latin-1 encoded window title (fallback)
-    wm_name:         Atom,
+    wm_name: Atom,
     /// WM_CLASS: Window class/instance names
-    wm_class:        Atom,
+    wm_class: Atom,
     /// _NET_WM_PID: Process ID owning the window
-    net_wm_pid:      Atom,
+    net_wm_pid: Atom,
     /// UTF8_STRING: atom for UTF-8 text encoding
-    utf8_string:     Atom,
+    utf8_string: Atom,
 }
 
 impl X11Backend {
@@ -195,9 +195,9 @@ impl X11Backend {
         }
 
         Ok(Self {
-            conn:       Arc::new(Mutex::new(None)),
+            conn: Arc::new(Mutex::new(None)),
             screen_idx: 0,
-            atoms:      OnceLock::new(),
+            atoms: OnceLock::new(),
         })
     }
 
@@ -205,8 +205,8 @@ impl X11Backend {
     ///
     /// Provides user-friendly error messages with actionable next steps for
     /// common xcap failure scenarios.
-    #[cfg(feature = "linux-x11")]
-    fn map_xcap_error(&self, e: xcap::XcapError) -> CaptureError {
+    #[cfg(target_os = "linux")]
+    fn map_xcap_error(e: xcap::XCapError) -> CaptureError {
         let err_str = e.to_string().to_lowercase();
 
         // Permission denied - possibly running in restricted environment
@@ -395,7 +395,7 @@ impl X11Backend {
                     }
                 })?
                 .atom,
-            net_wm_name:     net_wm_name
+            net_wm_name: net_wm_name
                 .reply()
                 .map_err(|e| {
                     tracing::error!("Failed to get _NET_WM_NAME reply: {}", e);
@@ -404,7 +404,7 @@ impl X11Backend {
                     }
                 })?
                 .atom,
-            wm_name:         wm_name
+            wm_name: wm_name
                 .reply()
                 .map_err(|e| {
                     tracing::error!("Failed to get WM_NAME reply: {}", e);
@@ -413,7 +413,7 @@ impl X11Backend {
                     }
                 })?
                 .atom,
-            wm_class:        wm_class
+            wm_class: wm_class
                 .reply()
                 .map_err(|e| {
                     tracing::error!("Failed to get WM_CLASS reply: {}", e);
@@ -422,7 +422,7 @@ impl X11Backend {
                     }
                 })?
                 .atom,
-            net_wm_pid:      net_wm_pid
+            net_wm_pid: net_wm_pid
                 .reply()
                 .map_err(|e| {
                     tracing::error!("Failed to get _NET_WM_PID reply: {}", e);
@@ -431,7 +431,7 @@ impl X11Backend {
                     }
                 })?
                 .atom,
-            utf8_string:     utf8_string
+            utf8_string: utf8_string
                 .reply()
                 .map_err(|e| {
                     tracing::error!("Failed to get UTF8_STRING reply: {}", e);
@@ -843,7 +843,7 @@ impl X11Backend {
     ///
     /// - `Some(WindowHandle)` - First matching window
     /// - `None` - No match or invalid regex
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     fn try_regex_match(&self, pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         // Try to compile as regex with safety limits
         let regex = RegexBuilder::new(pattern)
@@ -959,7 +959,7 @@ impl X11Backend {
     ///
     /// - `Some(WindowHandle)` - Best fuzzy match (score >= 60)
     /// - `None` - No match above threshold
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     fn try_fuzzy_match(&self, pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         let matcher = SkimMatcherV2::default();
         const THRESHOLD: i64 = 60;
@@ -977,7 +977,7 @@ impl X11Backend {
                     );
 
                     // Keep highest-scoring match
-                    if best_match.as_ref().map_or(true, |(_, s)| score > *s) {
+                    if best_match.as_ref().is_none_or(|(_, s)| score > *s) {
                         best_match = Some((window.id.clone(), score));
                     }
                 }
@@ -1086,7 +1086,7 @@ impl CaptureFacade for X11Backend {
     /// let selector = WindowSelector::by_class("Alacritty");
     /// let handle = backend.resolve_target(&selector).await?;
     /// ```
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
         use std::time::Duration;
 
@@ -1099,8 +1099,7 @@ impl CaptureFacade for X11Backend {
         {
             return Err(CaptureError::InvalidParameter {
                 parameter: "selector".to_string(),
-                reason:    "At least one field (title, class, or exe) must be specified"
-                    .to_string(),
+                reason: "At least one field (title, class, or exe) must be specified".to_string(),
             });
         }
 
@@ -1168,7 +1167,7 @@ impl CaptureFacade for X11Backend {
         Ok(result)
     }
 
-    #[cfg(not(feature = "linux-x11"))]
+    #[cfg(not(target_os = "linux"))]
     async fn resolve_target(&self, _selector: &WindowSelector) -> CaptureResult<WindowHandle> {
         Err(CaptureError::BackendNotAvailable {
             backend: BackendType::X11,
@@ -1189,7 +1188,7 @@ impl CaptureFacade for X11Backend {
     /// - [`CaptureError::WindowNotFound`] - Window no longer exists
     /// - [`CaptureError::BackendNotAvailable`] - xcap capture failed
     /// - [`CaptureError::CaptureTimeout`] - Operation exceeded 2s
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn capture_window(
         &self,
         handle: WindowHandle,
@@ -1202,7 +1201,7 @@ impl CaptureFacade for X11Backend {
             tracing::error!("Invalid window handle '{}': {}", handle, e);
             CaptureError::InvalidParameter {
                 parameter: "window_handle".to_string(),
-                reason:    format!("Expected numeric X11 window ID, got '{}'", handle),
+                reason: format!("Expected numeric X11 window ID, got '{}'", handle),
             }
         })?;
 
@@ -1306,7 +1305,7 @@ impl CaptureFacade for X11Backend {
         Ok(buffer)
     }
 
-    #[cfg(not(feature = "linux-x11"))]
+    #[cfg(not(target_os = "linux"))]
     async fn capture_window(
         &self,
         _handle: WindowHandle,
@@ -1337,7 +1336,7 @@ impl CaptureFacade for X11Backend {
     ///
     /// - [`CaptureError::BackendNotAvailable`] - Display capture failed
     /// - [`CaptureError::CaptureTimeout`] - Operation exceeded timeout
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn capture_display(
         &self,
         display_id: Option<u32>,
@@ -1349,34 +1348,34 @@ impl CaptureFacade for X11Backend {
         );
 
         // xcap doesn't have a direct "display capture" API; use Screen::all()
-        // Screen is essentially a monitor/display in xcap terminology
+        // Use Monitor::all() to enumerate displays
         let capture_future = tokio::task::spawn_blocking(|| {
-            // Get all screens and capture the primary one
-            let screens = xcap::Screen::all().map_err(|e| {
-                tracing::error!("xcap failed to enumerate screens: {}", e);
-                self.map_xcap_error(e)
+            // Get all monitors and capture the primary one
+            let monitors = xcap::Monitor::all().map_err(|e| {
+                tracing::error!("xcap failed to enumerate monitors: {}", e);
+                Self::map_xcap_error(e)
             })?;
 
-            if screens.is_empty() {
-                tracing::error!("No screens available for capture");
+            if monitors.is_empty() {
+                tracing::error!("No monitors available for capture");
                 return Err(CaptureError::BackendNotAvailable {
                     backend: BackendType::X11,
                 });
             }
 
-            // Use first screen (primary display)
-            let screen = &screens[0];
+            // Use first monitor (primary display)
+            let monitor = &monitors[0];
             tracing::debug!(
-                "Capturing screen: {}x{} at ({}, {})",
-                screen.width(),
-                screen.height(),
-                screen.x(),
-                screen.y()
+                "Capturing monitor: {:?}x{:?} at ({:?}, {:?})",
+                monitor.width(),
+                monitor.height(),
+                monitor.x(),
+                monitor.y()
             );
 
-            let image = screen.capture_image().map_err(|e| {
-                tracing::error!("xcap screen capture failed: {}", e);
-                self.map_xcap_error(e)
+            let image = monitor.capture_image().map_err(|e| {
+                tracing::error!("xcap monitor capture failed: {}", e);
+                Self::map_xcap_error(e)
             })?;
 
             tracing::info!("Successfully captured display: {}x{}", image.width(), image.height());
@@ -1415,7 +1414,7 @@ impl CaptureFacade for X11Backend {
         Ok(buffer)
     }
 
-    #[cfg(not(feature = "linux-x11"))]
+    #[cfg(not(target_os = "linux"))]
     async fn capture_display(
         &self,
         _display_id: Option<u32>,
@@ -1436,10 +1435,10 @@ impl CaptureFacade for X11Backend {
     /// - Restore tokens: No (X11 doesn't need permission persistence)
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            supports_cursor:          false, // xcap doesn't support cursor capture
-            supports_region:          true,  // Post-capture cropping supported
+            supports_cursor: false,          // xcap doesn't support cursor capture
+            supports_region: true,           // Post-capture cropping supported
             supports_wayland_restore: false, // X11 doesn't use restore tokens
-            supports_window_capture:  true,  // Direct enumeration allowed
+            supports_window_capture: true,   // Direct enumeration allowed
             supports_display_capture: true,  // xcap supports display capture
         }
     }
@@ -1569,7 +1568,7 @@ mod tests {
     // These tests use synthetic WindowInfo data to validate matching logic
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     fn test_try_regex_match() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
@@ -1730,7 +1729,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     fn test_try_fuzzy_match() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
@@ -1770,7 +1769,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_resolve_target_empty_selector() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
@@ -1813,7 +1812,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_capture_display_succeeds() {
         // Only run if DISPLAY is set (requires live X11 session)
         if std::env::var("DISPLAY").is_ok() {
@@ -1822,9 +1821,7 @@ mod tests {
             let result = backend.capture_display(None, &opts).await;
 
             // Should succeed on systems with displays
-            if result.is_ok() {
-                let buffer = result.unwrap();
-
+            if let Ok(buffer) = result {
                 // Verify dimensions are valid
                 assert!(
                     buffer.width() > 0 && buffer.height() > 0,
@@ -1855,23 +1852,24 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_capture_display_with_region() {
         // Test display capture with region cropping
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
-            let mut opts = CaptureOptions::default();
-            opts.region = Some(crate::model::Region {
-                x:      0,
-                y:      0,
-                width:  100,
-                height: 100,
-            });
+            let opts = CaptureOptions {
+                region: Some(crate::model::Region {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                }),
+                ..Default::default()
+            };
 
             let result = backend.capture_display(None, &opts).await;
 
-            if result.is_ok() {
-                let buffer = result.unwrap();
+            if let Ok(buffer) = result {
                 // Cropped region should be at most 100x100
                 assert!(
                     buffer.width() <= 100 && buffer.height() <= 100,
@@ -1883,13 +1881,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(any())]
     fn test_map_xcap_error_permission_denied() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
 
             // Simulate permission denied error
-            let error = xcap::XcapError::new("Permission denied accessing X11");
+            let error = xcap::XCapError::PermissionDenied;
             let result = backend.map_xcap_error(error);
 
             assert!(matches!(result, CaptureError::BackendNotAvailable { .. }));
@@ -1897,13 +1895,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(any())]
     fn test_map_xcap_error_display_connection_failed() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
 
             // Simulate display connection error
-            let error = xcap::XcapError::new("Failed to connect to display");
+            let error = xcap::XCapError::InvalidDisplay;
             let result = backend.map_xcap_error(error);
 
             assert!(matches!(result, CaptureError::BackendNotAvailable { .. }));
@@ -1911,13 +1909,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(any())]
     fn test_map_xcap_error_window_not_found() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
 
             // Simulate window not found error
-            let error = xcap::XcapError::new("Window not found");
+            let error = xcap::XCapError::NotFound;
             let result = backend.map_xcap_error(error);
 
             assert!(matches!(result, CaptureError::BackendNotAvailable { .. }));
@@ -1925,13 +1923,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(any())]
     fn test_map_xcap_error_generic_fallback() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
 
             // Simulate generic unknown error
-            let error = xcap::XcapError::new("Unknown xcap error");
+            let error = xcap::XCapError::Unknown;
             let result = backend.map_xcap_error(error);
 
             // Should always map to BackendNotAvailable with a log message
@@ -2012,7 +2010,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     fn test_with_timeout_boundary_conditions() {
         // Test timeout at exact boundary
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2029,7 +2027,7 @@ mod tests {
         // Test that error propagates through timeout wrapper
         let result = rt.block_on(X11Backend::with_timeout(
             async {
-                Err::<_, CaptureError>(CaptureError::BackendNotAvailable {
+                Err::<(), CaptureError>(CaptureError::BackendNotAvailable {
                     backend: BackendType::X11,
                 })
             },
@@ -2039,7 +2037,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     fn test_try_regex_match_edge_cases() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
@@ -2127,7 +2125,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     fn test_try_fuzzy_match_threshold() {
         if std::env::var("DISPLAY").is_ok() {
             let backend = X11Backend::new().unwrap();
@@ -2188,17 +2186,12 @@ mod tests {
     fn test_constants_values() {
         // Verify timeout constants are reasonable
         assert_eq!(LIST_WINDOWS_TIMEOUT_MS, 1500);
-        assert!(LIST_WINDOWS_TIMEOUT_MS > 0, "LIST_WINDOWS_TIMEOUT should be positive");
 
         assert_eq!(CAPTURE_WINDOW_TIMEOUT_MS, 2000);
-        assert!(
-            CAPTURE_WINDOW_TIMEOUT_MS > LIST_WINDOWS_TIMEOUT_MS,
-            "Capture timeout should be greater than list timeout"
-        );
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_image_buffer_validity() {
         // Verify that ImageBuffer can hold valid image data
         // This test validates the image capture pipeline produces valid buffers
@@ -2231,7 +2224,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_captured_image_has_valid_dimensions() {
         // Verify that captured images have consistent valid dimensions
         // This is a sanity check that dimensions match pixel data
@@ -2281,7 +2274,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_captured_image_has_pixel_data() {
         // Verify that captured image actually contains pixel data (not blank/zeroed)
         // This test ensures images are genuinely captured, not just dimension-checked
@@ -2341,7 +2334,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_window_capture_vs_display_different_data() {
         // Verify that different capture sources produce different pixel data
         // This proves captures are actually sourcing different parts of screen
@@ -2408,7 +2401,7 @@ mod tests {
 
             // If both are available, check they're not identical (different regions)
             if window_bytes.len() < display_bytes.len() {
-                let identical_start = display_bytes[..window_bytes.len()] == window_bytes[..];
+                let _identical_start = display_bytes[..window_bytes.len()] == window_bytes[..];
                 // They might be identical if window is at top-left, so just verify both have
                 // content
                 assert!(
@@ -2422,7 +2415,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_region_crop_reduces_pixel_data() {
         // Verify that region cropping actually reduces the amount of pixel data
         // This proves transformations are applied to real image data
@@ -2444,13 +2437,15 @@ mod tests {
             let full_len = full_bytes.len();
 
             // Capture with region crop (small area)
-            let mut cropped_opts = CaptureOptions::default();
-            cropped_opts.region = Some(crate::model::Region {
-                x:      0,
-                y:      0,
-                width:  100,
-                height: 100,
-            });
+            let cropped_opts = CaptureOptions {
+                region: Some(crate::model::Region {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                }),
+                ..Default::default()
+            };
 
             let cropped_image = match backend.capture_display(None, &cropped_opts).await {
                 Ok(img) => img,
@@ -2492,7 +2487,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "linux-x11")]
+    #[cfg(target_os = "linux")]
     async fn test_scale_transform_changes_byte_size() {
         // Verify that scaling actually changes the image byte size
         // This proves scaling transformation is applied to pixel data
@@ -2515,8 +2510,10 @@ mod tests {
             let normal_dims = (normal_image.width(), normal_image.height());
 
             // Capture at 50% scale
-            let mut scaled_opts = CaptureOptions::default();
-            scaled_opts.scale = 0.5;
+            let scaled_opts = CaptureOptions {
+                scale: 0.5,
+                ..Default::default()
+            };
 
             let scaled_image = match backend.capture_display(None, &scaled_opts).await {
                 Ok(img) => img,

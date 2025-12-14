@@ -162,9 +162,9 @@ pub enum WaylandSource {
     /// - **wlroots**: Varies by compositor (Sway uses slurp for selection)
     NewSession {
         /// Type of content to capture
-        source_type:    SourceType,
+        source_type: SourceType,
         /// How long the permission should persist
-        persist_mode:   PersistMode,
+        persist_mode: PersistMode,
         /// Whether to include the cursor in the captured stream
         ///
         /// Default: `false` (cursor hidden). When `true`, the cursor is
@@ -364,11 +364,11 @@ pub type WindowHandle = String;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Region {
     /// X coordinate of the top-left corner
-    pub x:      u32,
+    pub x: u32,
     /// Y coordinate of the top-left corner
-    pub y:      u32,
+    pub y: u32,
     /// Width of the region in pixels
-    pub width:  u32,
+    pub width: u32,
     /// Height of the region in pixels
     pub height: u32,
 }
@@ -455,15 +455,15 @@ impl WindowSelector {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WindowInfo {
     /// Platform-specific window identifier
-    pub id:      WindowHandle,
+    pub id: WindowHandle,
     /// Window title
-    pub title:   String,
+    pub title: String,
     /// Window class name
-    pub class:   String,
+    pub class: String,
     /// Window owner/application name
-    pub owner:   String,
+    pub owner: String,
     /// Process ID of the window owner
-    pub pid:     u32,
+    pub pid: u32,
     /// Backend that detected this window
     pub backend: BackendType,
 }
@@ -496,13 +496,13 @@ impl WindowInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Capabilities {
     /// Backend supports capturing cursor in screenshots
-    pub supports_cursor:          bool,
+    pub supports_cursor: bool,
     /// Backend supports partial region capture
-    pub supports_region:          bool,
+    pub supports_region: bool,
     /// Backend supports Wayland restore tokens (for permission-free recapture)
     pub supports_wayland_restore: bool,
     /// Backend supports window-specific capture
-    pub supports_window_capture:  bool,
+    pub supports_window_capture: bool,
     /// Backend supports full display/screen capture
     pub supports_display_capture: bool,
 }
@@ -511,10 +511,10 @@ impl Capabilities {
     /// Creates a Capabilities struct with all features enabled
     pub fn full() -> Self {
         Self {
-            supports_cursor:          true,
-            supports_region:          true,
+            supports_cursor: true,
+            supports_region: true,
             supports_wayland_restore: true,
-            supports_window_capture:  true,
+            supports_window_capture: true,
             supports_display_capture: true,
         }
     }
@@ -522,10 +522,10 @@ impl Capabilities {
     /// Creates a Capabilities struct with all features disabled
     pub fn none() -> Self {
         Self {
-            supports_cursor:          false,
-            supports_region:          false,
+            supports_cursor: false,
+            supports_region: false,
             supports_wayland_restore: false,
-            supports_window_capture:  false,
+            supports_window_capture: false,
             supports_display_capture: false,
         }
     }
@@ -563,19 +563,19 @@ impl Default for Capabilities {
 pub struct CaptureOptions {
     /// Output image format
     #[serde(default)]
-    pub format:         ImageFormat,
+    pub format: ImageFormat,
     /// JPEG/WebP quality (0-100, clamped if out of range)
     #[serde(default = "default_quality")]
-    pub quality:        u8,
+    pub quality: u8,
     /// Scale factor for output image (0.1-2.0, clamped if out of range)
     #[serde(default = "default_scale")]
-    pub scale:          f32,
+    pub scale: f32,
     /// Whether to include cursor in screenshot
     #[serde(default)]
     pub include_cursor: bool,
     /// Optional region to capture (None = full screen/window)
     #[serde(default)]
-    pub region:         Option<Region>,
+    pub region: Option<Region>,
     /// Wayland-specific source (for restore tokens, M2)
     #[serde(default)]
     pub wayland_source: Option<WaylandSource>,
@@ -610,11 +610,11 @@ impl CaptureOptions {
 impl Default for CaptureOptions {
     fn default() -> Self {
         Self {
-            format:         ImageFormat::default(),
-            quality:        default_quality(),
-            scale:          default_scale(),
+            format: ImageFormat::default(),
+            quality: default_quality(),
+            scale: default_scale(),
             include_cursor: false,
-            region:         None,
+            region: None,
             wayland_source: None,
         }
     }
@@ -674,7 +674,7 @@ impl CaptureOptionsBuilder {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PlatformInfo {
     /// Operating system name (e.g., "linux", "windows", "macos")
-    pub os:      String,
+    pub os: String,
     /// Detected display backend
     pub backend: BackendType,
 }
@@ -695,9 +695,9 @@ pub struct HealthCheckResponse {
     /// Platform/OS name
     pub platform: String,
     /// Backend type as a string
-    pub backend:  String,
+    pub backend: String,
     /// Whether the server is functioning correctly
-    pub ok:       bool,
+    pub ok: bool,
 }
 
 impl HealthCheckResponse {
@@ -705,8 +705,8 @@ impl HealthCheckResponse {
     pub fn from_platform(info: PlatformInfo) -> Self {
         Self {
             platform: info.os,
-            backend:  info.backend.as_str().to_string(),
-            ok:       true,
+            backend: info.backend.as_str().to_string(),
+            ok: true,
         }
     }
 
@@ -796,8 +796,8 @@ mod tests {
     fn test_health_check_response_serialization() {
         let response = HealthCheckResponse {
             platform: "linux".to_string(),
-            backend:  "wayland".to_string(),
-            ok:       true,
+            backend: "wayland".to_string(),
+            ok: true,
         };
 
         let json = serde_json::to_value(&response).unwrap();
@@ -903,8 +903,8 @@ mod tests {
     #[test]
     fn test_wayland_source_new_session_serialization() {
         let source = WaylandSource::NewSession {
-            source_type:    SourceType::Monitor,
-            persist_mode:   PersistMode::PersistUntilRevoked,
+            source_type: SourceType::Monitor,
+            persist_mode: PersistMode::PersistUntilRevoked,
             include_cursor: true,
         };
         let json = serde_json::to_string(&source).unwrap();
@@ -1090,8 +1090,8 @@ mod tests {
     fn test_wayland_source_roundtrip_new_session() {
         // Test serialization → deserialization roundtrip for NewSession
         let original = WaylandSource::NewSession {
-            source_type:    SourceType::Virtual,
-            persist_mode:   PersistMode::DoNotPersist,
+            source_type: SourceType::Virtual,
+            persist_mode: PersistMode::DoNotPersist,
             include_cursor: true,
         };
         let json = serde_json::to_string(&original).unwrap();
@@ -1247,11 +1247,11 @@ mod tests {
     #[test]
     fn test_capture_options_quality_validation() {
         let mut opts = CaptureOptions {
-            format:         ImageFormat::Webp,
-            quality:        150,
-            scale:          1.0,
+            format: ImageFormat::Webp,
+            quality: 150,
+            scale: 1.0,
             include_cursor: false,
-            region:         None,
+            region: None,
             wayland_source: None,
         };
         opts.validate();
@@ -1265,11 +1265,11 @@ mod tests {
     #[test]
     fn test_capture_options_scale_validation() {
         let mut opts = CaptureOptions {
-            format:         ImageFormat::Png,
-            quality:        80,
-            scale:          3.0,
+            format: ImageFormat::Png,
+            quality: 80,
+            scale: 3.0,
             include_cursor: false,
-            region:         None,
+            region: None,
             wayland_source: None,
         };
         opts.validate();
@@ -1308,11 +1308,11 @@ mod tests {
     #[test]
     fn test_capture_options_serialization() {
         let opts = CaptureOptions {
-            format:         ImageFormat::Jpeg,
-            quality:        85,
-            scale:          1.5,
+            format: ImageFormat::Jpeg,
+            quality: 85,
+            scale: 1.5,
             include_cursor: true,
-            region:         Some(Region::new(10, 20, 640, 480)),
+            region: Some(Region::new(10, 20, 640, 480)),
             wayland_source: None,
         };
 

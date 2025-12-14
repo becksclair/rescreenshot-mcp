@@ -9,6 +9,8 @@
 //! - Backend implementations for Wayland, X11, Windows, and macOS (to be
 //!   implemented in future phases)
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use crate::{
@@ -19,23 +21,217 @@ use crate::{
 pub mod image_buffer;
 pub mod mock;
 
-#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
+#[cfg(target_os = "linux")]
 pub mod wayland_backend;
 
-#[cfg(all(target_os = "linux", feature = "linux-x11"))]
+#[cfg(target_os = "linux")]
 pub mod x11_backend;
 
-#[cfg(feature = "windows-backend")]
+#[cfg(target_os = "windows")]
 pub mod windows_backend;
 
 pub use image_buffer::ImageBuffer;
 pub use mock::MockBackend;
-#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
+#[cfg(target_os = "linux")]
 pub use wayland_backend::{PrimeConsentResult, WaylandBackend};
-#[cfg(feature = "windows-backend")]
+#[cfg(target_os = "windows")]
 pub use windows_backend::WindowsBackend;
-#[cfg(all(target_os = "linux", feature = "linux-x11"))]
+#[cfg(target_os = "linux")]
 pub use x11_backend::X11Backend;
+
+#[cfg(target_os = "linux")]
+struct LinuxAutoBackend {
+    primary: Arc<dyn CaptureFacade>,
+    fallback: Option<Arc<dyn CaptureFacade>>,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxAutoBackend {
+    fn new(primary: Arc<dyn CaptureFacade>, fallback: Option<Arc<dyn CaptureFacade>>) -> Self {
+        Self { primary, fallback }
+    }
+
+    fn union_capabilities(&self) -> Capabilities {
+        let primary = self.primary.capabilities();
+        let Some(fallback) = &self.fallback else {
+            return primary;
+        };
+
+        let fb = fallback.capabilities();
+        Capabilities {
+            supports_cursor: primary.supports_cursor || fb.supports_cursor,
+            supports_region: primary.supports_region || fb.supports_region,
+            supports_wayland_restore: primary.supports_wayland_restore
+                || fb.supports_wayland_restore,
+            supports_window_capture: primary.supports_window_capture || fb.supports_window_capture,
+            supports_display_capture: primary.supports_display_capture
+                || fb.supports_display_capture,
+        }
+    }
+
+    fn should_fallback_on_error(err: &CaptureError) -> bool {
+        matches!(
+            err,
+            CaptureError::PortalUnavailable { .. }
+                | CaptureError::BackendNotAvailable { .. }
+                | CaptureError::CaptureTimeout { .. }
+                | CaptureError::WindowNotFound { .. }
+                | CaptureError::TokenNotFound { .. }
+        )
+    }
+
+    fn selector_is_explicit_wayland(selector: &WindowSelector) -> bool {
+        selector
+            .exe
+            .as_deref()
+            .is_some_and(|exe| exe.starts_with("wayland:"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[async_trait]
+impl CaptureFacade for LinuxAutoBackend {
+    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
+        // Best-effort: show both Wayland primed sources and X11 windows when available.
+        let mut windows = self.primary.list_windows().await?;
+
+        if let Some(fallback) = &self.fallback {
+            if let Ok(mut more) = fallback.list_windows().await {
+                windows.append(&mut more);
+            }
+        }
+
+        Ok(windows)
+    }
+
+    async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+        // If user is explicitly targeting a Wayland source, go straight to the primary
+        // backend so we don't "helpfully" match an X11 window named similarly.
+        if Self::selector_is_explicit_wayland(selector) {
+            return self.primary.resolve_target(selector).await;
+        }
+
+        if let Some(fallback) = &self.fallback {
+            match fallback.resolve_target(selector).await {
+                Ok(handle) => return Ok(handle),
+                Err(e) if !Self::should_fallback_on_error(&e) => return Err(e),
+                Err(_) => {
+                    // Fall through to primary.
+                }
+            }
+        }
+
+        self.primary.resolve_target(selector).await
+    }
+
+    async fn capture_window(
+        &self,
+        handle: WindowHandle,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        match self.primary.capture_window(handle.clone(), opts).await {
+            Ok(img) => Ok(img),
+            Err(e) => {
+                if let Some(fallback) = &self.fallback {
+                    if Self::should_fallback_on_error(&e) {
+                        return fallback.capture_window(handle, opts).await;
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn capture_display(
+        &self,
+        display_id: Option<u32>,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        match self.primary.capture_display(display_id, opts).await {
+            Ok(img) => Ok(img),
+            Err(e) => {
+                if let Some(fallback) = &self.fallback {
+                    if Self::should_fallback_on_error(&e) {
+                        return fallback.capture_display(display_id, opts).await;
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        self.union_capabilities()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        // Delegate downcasting to the currently selected primary backend so tools
+        // like `prime_wayland_consent` can downcast to `WaylandBackend`.
+        self.primary.as_any()
+    }
+}
+
+/// Creates a default capture backend for the current platform.
+///
+/// The default build compiles only native platform dependencies and selects a
+/// working backend automatically at runtime.
+///
+/// - **Windows**: Uses `WindowsBackend`
+/// - **Linux**: Prefers Wayland when detected, but may fall back to X11 when
+///   available and Wayland operations fail.
+/// - **macOS/Other**: Returns a structured `BackendNotAvailable` error
+pub fn create_default_backend() -> CaptureResult<Arc<dyn CaptureFacade>> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(Arc::new(WindowsBackend::new()?))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use crate::{error::CaptureError, model::BackendType};
+
+        let platform = crate::util::detect::detect_platform();
+
+        match platform.backend {
+            BackendType::Wayland => {
+                let key_store = Arc::new(crate::util::key_store::KeyStore::new());
+                let primary: Arc<dyn CaptureFacade> = Arc::new(WaylandBackend::new(key_store));
+
+                // If X11 is available in this session (e.g., XWayland), keep it as a fallback.
+                let fallback: Option<Arc<dyn CaptureFacade>> =
+                    X11Backend::new().ok().map(|b| Arc::new(b) as Arc<dyn CaptureFacade>);
+
+                Ok(if fallback.is_some() {
+                    Arc::new(LinuxAutoBackend::new(primary, fallback))
+                } else {
+                    primary
+                })
+            }
+            BackendType::X11 => {
+                Ok(Arc::new(X11Backend::new()?))
+            }
+            BackendType::None | BackendType::Windows | BackendType::MacOS => {
+                Err(CaptureError::BackendNotAvailable {
+                    backend: BackendType::None,
+                })
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Err(crate::error::CaptureError::BackendNotAvailable {
+            backend: crate::model::BackendType::MacOS,
+        })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        Err(crate::error::CaptureError::BackendNotAvailable {
+            backend: crate::model::BackendType::None,
+        })
+    }
+}
 
 /// Core trait for screenshot capture backends
 ///

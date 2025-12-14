@@ -16,7 +16,7 @@
 //! cargo test --test mcp_integration_tests
 //!
 //! # Run live Windows tests (requires desktop environment)
-//! cargo test --test mcp_integration_tests --features windows-backend -- --ignored --nocapture
+//! cargo test --test mcp_integration_tests -- --ignored --nocapture
 //! ```
 
 mod common;
@@ -246,7 +246,7 @@ async fn test_capture_with_injected_permission_error() {
 
     let mock = MockBackend::new().with_error(CaptureError::PermissionDenied {
         platform: "test".to_string(),
-        backend:  BackendType::None,
+        backend: BackendType::None,
     });
     let ctx = McpTestContext::new_with_configured_mock(mock);
 
@@ -284,7 +284,7 @@ async fn test_capture_with_injected_window_not_found() {
 // Live Windows Tests (requires desktop environment)
 // ============================================================================
 
-#[cfg(feature = "windows-backend")]
+#[cfg(target_os = "windows")]
 mod live_windows_tests {
     use super::*;
 

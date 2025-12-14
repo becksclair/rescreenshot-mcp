@@ -1,0 +1,11 @@
+-W .github/workflows/ci.yml
+#
+# Local CI runner image mappings for nektos/act.
+# We only map ubuntu-latest because act runs Linux jobs in containers.
+#
+# Docs: https://nektosact.com/
+-P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest
+#
+# Speed/sanity defaults for iterative local runs.
+--pull=false
+--reuse

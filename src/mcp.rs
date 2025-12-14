@@ -14,7 +14,7 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[cfg(all(target_os = "linux", feature = "linux-wayland"))]
+#[cfg(target_os = "linux")]
 use crate::capture::WaylandBackend;
 use crate::{
     capture::{CaptureFacade, MockBackend},
@@ -70,10 +70,7 @@ fn default_source_id() -> String {
 }
 
 /// Parses a source type string to SourceType enum
-#[cfg_attr(
-    not(all(target_os = "linux", feature = "linux-wayland")),
-    allow(dead_code)
-)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_source_type(source_type_str: &str) -> Result<SourceType, String> {
     match source_type_str.to_lowercase().as_str() {
         "monitor" => Ok(SourceType::Monitor),
@@ -142,9 +139,9 @@ pub struct ScreenshotMcpServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     /// Backend for screenshot capture (Wayland, X11, Windows, macOS, or Mock)
-    backend:     Arc<dyn CaptureFacade>,
+    backend: Arc<dyn CaptureFacade>,
     /// Temporary file manager for storing captured screenshots
-    temp_files:  Arc<TempFileManager>,
+    temp_files: Arc<TempFileManager>,
 }
 
 #[tool_router]
@@ -392,16 +389,13 @@ impl ScreenshotMcpServer {
     ///   }]
     /// }
     /// ```
-    #[cfg_attr(
-        not(all(target_os = "linux", feature = "linux-wayland")),
-        allow(unused_variables)
-    )]
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     pub async fn prime_wayland_consent(
         &self,
         params: PrimeWaylandConsentParams,
     ) -> Result<CallToolResult, McpError> {
-        // Implementation is only available when linux-wayland feature is enabled
-        #[cfg(all(target_os = "linux", feature = "linux-wayland"))]
+        // Implementation is only available on Linux
+        #[cfg(target_os = "linux")]
         {
             // Step 1: Downcast to WaylandBackend
             let wayland_backend = self
@@ -466,12 +460,11 @@ impl ScreenshotMcpServer {
             Ok(CallToolResult::success(vec![Content::text(json_str)]))
         }
 
-        // When feature is not enabled, return error
-        #[cfg(not(all(target_os = "linux", feature = "linux-wayland")))]
+        // When not on Linux, return error
+        #[cfg(not(target_os = "linux"))]
         {
             Err(McpError::internal_error(
-                "prime_wayland_consent requires Wayland feature. This server was not compiled \
-                 with Wayland support. Rebuild with --features linux-wayland to enable this tool.",
+                "prime_wayland_consent is only available on Linux in a Wayland session.",
                 None,
             ))
         }
@@ -549,11 +542,11 @@ impl ScreenshotMcpServer {
 
         // Use default capture options (PNG, quality 80, scale 1.0, no cursor)
         let mut opts = CaptureOptions {
-            format:         ImageFormat::Png,
-            quality:        80,
-            scale:          1.0,
+            format: ImageFormat::Png,
+            quality: 80,
+            scale: 1.0,
             include_cursor: false,
-            region:         None,
+            region: None,
             wayland_source: None,
         };
         opts.validate();

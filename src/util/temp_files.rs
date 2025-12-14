@@ -44,7 +44,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct TempFile {
     /// Path to the temporary file
-    pub path:      PathBuf,
+    pub path: PathBuf,
     /// Timestamp when the file was created
     pub timestamp: DateTime<Utc>,
 }

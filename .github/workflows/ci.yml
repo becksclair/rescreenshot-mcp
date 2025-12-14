@@ -11,22 +11,78 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: Test - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  test-linux:
+    name: Test Linux (${{ matrix.container }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            # Linux CI should only enable Linux backends; `--all-features` also
-            # flips on other platform feature flags and can hide regressions or
-            # introduce irrelevant build failures.
-            features: --features linux-wayland,linux-x11
-            compile_integration: true
-          - os: windows-latest
-            features: --features windows-backend
-            compile_integration: false
+        container: ['ubuntu:22.04', 'fedora:39']
+    container:
+      image: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies (Ubuntu)
+        if: startsWith(matrix.container, 'ubuntu')
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential pkg-config \
+            curl git \
+            clang libclang-dev \
+            libwayland-dev \
+            libx11-dev libxcb1-dev libx11-xcb-dev \
+            libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev \
+            libdrm-dev libgbm-dev libegl1-mesa-dev \
+            libsecret-1-dev \
+            libpipewire-0.3-dev libspa-0.2-dev
+
+      - name: Install Dependencies (Fedora)
+        if: startsWith(matrix.container, 'fedora')
+        run: |
+          dnf install -y \
+            gcc gcc-c++ make pkg-config \
+            curl git \
+            clang clang-devel \
+            wayland-devel \
+            libX11-devel libxcb-devel \
+            libdrm-devel mesa-libgbm-devel mesa-libEGL-devel \
+            libsecret-devel \
+            pipewire-devel
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests (with coverage)
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+
+      - name: Check Documentation
+        run: cargo doc --no-deps --document-private-items
+
+  test-windows:
+    name: Test Windows
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -38,44 +94,22 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run unit tests
-        run: cargo test ${{ matrix.features }} --lib
-
-      - name: Compile integration tests (no execution)
-        if: matrix.compile_integration
-        run: cargo test --features integration-tests,perf-tests --no-run
-
-      - name: Run clippy
-        run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
-
       - name: Check formatting
         run: cargo fmt --check
 
-  build:
-    name: Build - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            features: --features linux-wayland,linux-x11
-            build_measure_capture: true
-          - os: windows-latest
-            features: --features windows-backend
-            build_measure_capture: false
-    steps:
-      - uses: actions/checkout@v4
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test --all-features
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build release
-        run: cargo build --release ${{ matrix.features }}
-
-      - name: Build measure-capture tool
-        if: matrix.build_measure_capture
-        run: cargo build --bin measure-capture --features perf-tests,linux-wayland
+  # macOS deferred until M5
+  # test-macos:
+  #   name: Test macOS
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Install Rust toolchain
+  #       uses: dtolnay/rust-toolchain@stable
+  #     - name: Run tests
+  #       run: cargo test --all-features

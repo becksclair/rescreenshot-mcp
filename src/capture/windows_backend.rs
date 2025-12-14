@@ -287,6 +287,15 @@ impl WindowsBackend {
     }
 
     /// Gets the title of a window
+    ///
+    /// # Buffer Sizing Safety
+    ///
+    /// This function uses `GetWindowTextW` which requires careful buffer sizing:
+    /// - `GetWindowTextLengthW` returns text length WITHOUT null terminator
+    /// - Buffer MUST be allocated as `len + 1` to accommodate the null terminator
+    /// - Off-by-one errors here are a common Win32 pitfall causing buffer overruns
+    ///
+    /// Future modifications MUST preserve the `(len + 1)` buffer sizing logic.
     fn get_window_title(hwnd: HWND) -> String {
         // Cap title length to prevent unbounded allocation from malicious windows
         const MAX_TITLE_LEN: i32 = 32768;
@@ -296,7 +305,16 @@ impl WindowsBackend {
                 return String::new();
             }
 
-            // Allocate buffer (+1 for null terminator)
+            // CRITICAL: Buffer sizing for GetWindowTextW must include +1 for null terminator.
+            // GetWindowTextLengthW returns the text length WITHOUT the null terminator.
+            // GetWindowTextW requires a buffer large enough to hold len characters PLUS the
+            // null terminator. Off-by-one errors here are a common Win32 pitfall that can
+            // cause buffer overruns, memory corruption, or silent truncation.
+            // 
+            // Buffer size MUST be: (len + 1) * sizeof(u16) bytes
+            // This is equivalent to: vec![0; (len + 1) as usize] for u16 elements
+            //
+            // DO NOT modify this buffer sizing logic without understanding this requirement.
             let mut buffer: Vec<u16> = vec![0; (len + 1) as usize];
             let copied = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
 
@@ -645,7 +663,7 @@ impl WindowsBackend {
                 tracing::error!("Monitor {} not found: {}", id, e);
                 CaptureError::InvalidParameter {
                     parameter: "display_id".to_string(),
-                    reason:    format!("Monitor {} not found", id),
+                    reason: format!("Monitor {} not found", id),
                 }
             })?,
         };
@@ -815,7 +833,7 @@ impl CaptureFacade for WindowsBackend {
         {
             return Err(CaptureError::InvalidParameter {
                 parameter: "selector".to_string(),
-                reason:    "At least one of title, class, or exe must be specified".to_string(),
+                reason: "At least one of title, class, or exe must be specified".to_string(),
             });
         }
 
@@ -891,7 +909,7 @@ impl CaptureFacade for WindowsBackend {
         // Parse HWND from handle string (stored as isize for Send safety)
         let hwnd_val: isize = handle.parse().map_err(|_| CaptureError::InvalidParameter {
             parameter: "handle".to_string(),
-            reason:    format!("Invalid window handle: {}", handle),
+            reason: format!("Invalid window handle: {}", handle),
         })?;
 
         // Copy options for blocking task
@@ -1000,10 +1018,10 @@ impl CaptureFacade for WindowsBackend {
     /// - Region cropping (via post-processing)
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            supports_window_capture:  true,
+            supports_window_capture: true,
             supports_display_capture: true,
-            supports_region:          true,
-            supports_cursor:          true, // WGC supports cursor capture
+            supports_region: true,
+            supports_cursor: true, // WGC supports cursor capture
             supports_wayland_restore: false,
         }
     }
@@ -1116,19 +1134,19 @@ mod tests {
     fn test_try_regex_match() {
         let windows = vec![
             WindowInfo {
-                id:      "1".to_string(),
-                title:   "Firefox - Google".to_string(),
-                class:   "MozillaWindowClass".to_string(),
-                owner:   "firefox.exe".to_string(),
-                pid:     1234,
+                id: "1".to_string(),
+                title: "Firefox - Google".to_string(),
+                class: "MozillaWindowClass".to_string(),
+                owner: "firefox.exe".to_string(),
+                pid: 1234,
                 backend: BackendType::Windows,
             },
             WindowInfo {
-                id:      "2".to_string(),
-                title:   "Notepad".to_string(),
-                class:   "Notepad".to_string(),
-                owner:   "notepad.exe".to_string(),
-                pid:     5678,
+                id: "2".to_string(),
+                title: "Notepad".to_string(),
+                class: "Notepad".to_string(),
+                owner: "notepad.exe".to_string(),
+                pid: 5678,
                 backend: BackendType::Windows,
             },
         ];
@@ -1153,11 +1171,11 @@ mod tests {
     #[test]
     fn test_try_substring_match() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Visual Studio Code".to_string(),
-            class:   "Chrome_WidgetWin_1".to_string(),
-            owner:   "code.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Visual Studio Code".to_string(),
+            class: "Chrome_WidgetWin_1".to_string(),
+            owner: "code.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1173,11 +1191,11 @@ mod tests {
     #[test]
     fn test_try_exact_class_match() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Notepad".to_string(),
-            class:   "Notepad".to_string(),
-            owner:   "notepad.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Notepad".to_string(),
+            class: "Notepad".to_string(),
+            owner: "notepad.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1192,11 +1210,11 @@ mod tests {
     #[test]
     fn test_try_exact_exe_match() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Test Window".to_string(),
-            class:   "TestClass".to_string(),
-            owner:   "myapp.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Test Window".to_string(),
+            class: "TestClass".to_string(),
+            owner: "myapp.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1211,11 +1229,11 @@ mod tests {
     #[test]
     fn test_try_fuzzy_match() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Visual Studio Code".to_string(),
-            class:   "Test".to_string(),
-            owner:   "code.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Visual Studio Code".to_string(),
+            class: "Test".to_string(),
+            owner: "code.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1319,11 +1337,11 @@ mod tests {
     #[test]
     fn test_regex_match_case_insensitive() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "NOTEPAD - Untitled".to_string(),
-            class:   "Notepad".to_string(),
-            owner:   "notepad.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "NOTEPAD - Untitled".to_string(),
+            class: "Notepad".to_string(),
+            owner: "notepad.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1335,11 +1353,11 @@ mod tests {
     #[test]
     fn test_regex_match_with_special_chars() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Document (1).txt - Notepad".to_string(),
-            class:   "Notepad".to_string(),
-            owner:   "notepad.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Document (1).txt - Notepad".to_string(),
+            class: "Notepad".to_string(),
+            owner: "notepad.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1352,19 +1370,19 @@ mod tests {
     fn test_substring_match_partial() {
         let windows = vec![
             WindowInfo {
-                id:      "1".to_string(),
-                title:   "Google Chrome".to_string(),
-                class:   "Chrome_WidgetWin_1".to_string(),
-                owner:   "chrome.exe".to_string(),
-                pid:     1234,
+                id: "1".to_string(),
+                title: "Google Chrome".to_string(),
+                class: "Chrome_WidgetWin_1".to_string(),
+                owner: "chrome.exe".to_string(),
+                pid: 1234,
                 backend: BackendType::Windows,
             },
             WindowInfo {
-                id:      "2".to_string(),
-                title:   "Firefox Developer Edition".to_string(),
-                class:   "MozillaWindowClass".to_string(),
-                owner:   "firefox.exe".to_string(),
-                pid:     5678,
+                id: "2".to_string(),
+                title: "Firefox Developer Edition".to_string(),
+                class: "MozillaWindowClass".to_string(),
+                owner: "firefox.exe".to_string(),
+                pid: 5678,
                 backend: BackendType::Windows,
             },
         ];
@@ -1380,11 +1398,11 @@ mod tests {
     #[test]
     fn test_exact_class_match_not_found() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Test Window".to_string(),
-            class:   "TestClass".to_string(),
-            owner:   "test.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Test Window".to_string(),
+            class: "TestClass".to_string(),
+            owner: "test.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1395,11 +1413,11 @@ mod tests {
     #[test]
     fn test_exact_exe_match_with_extension() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Visual Studio Code".to_string(),
-            class:   "Chrome_WidgetWin_1".to_string(),
-            owner:   "Code.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Visual Studio Code".to_string(),
+            class: "Chrome_WidgetWin_1".to_string(),
+            owner: "Code.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1415,11 +1433,11 @@ mod tests {
     #[test]
     fn test_fuzzy_match_with_typos() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Microsoft Word Document".to_string(),
-            class:   "Test".to_string(),
-            owner:   "WINWORD.EXE".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Microsoft Word Document".to_string(),
+            class: "Test".to_string(),
+            owner: "WINWORD.EXE".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1432,11 +1450,11 @@ mod tests {
     #[test]
     fn test_fuzzy_match_with_abbreviation() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Windows PowerShell".to_string(),
-            class:   "Test".to_string(),
-            owner:   "powershell.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Windows PowerShell".to_string(),
+            class: "Test".to_string(),
+            owner: "powershell.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1448,11 +1466,11 @@ mod tests {
     #[test]
     fn test_regex_pattern_too_large() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Test".to_string(),
-            class:   "Test".to_string(),
-            owner:   "test.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Test".to_string(),
+            class: "Test".to_string(),
+            owner: "test.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1527,11 +1545,11 @@ mod tests {
     #[test]
     fn test_window_info_fields() {
         let info = WindowInfo {
-            id:      "12345".to_string(),
-            title:   "Test Window".to_string(),
-            class:   "TestClass".to_string(),
-            owner:   "test.exe".to_string(),
-            pid:     1234,
+            id: "12345".to_string(),
+            title: "Test Window".to_string(),
+            class: "TestClass".to_string(),
+            owner: "test.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         };
 
@@ -1749,11 +1767,11 @@ mod tests {
     #[test]
     fn test_regex_pattern_injection_safe() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Test | Window".to_string(),
-            class:   "Test".to_string(),
-            owner:   "test.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Test | Window".to_string(),
+            class: "Test".to_string(),
+            owner: "test.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1774,11 +1792,11 @@ mod tests {
     #[test]
     fn test_substring_match_unicode_characters() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "文档 - Notepad".to_string(), // Chinese characters
-            class:   "Notepad".to_string(),
-            owner:   "notepad.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "文档 - Notepad".to_string(), // Chinese characters
+            class: "Notepad".to_string(),
+            owner: "notepad.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1790,11 +1808,11 @@ mod tests {
     #[test]
     fn test_substring_match_emoji() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "📄 Document.txt".to_string(), // Emoji
-            class:   "Notepad".to_string(),
-            owner:   "notepad.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "📄 Document.txt".to_string(), // Emoji
+            class: "Notepad".to_string(),
+            owner: "notepad.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1806,11 +1824,11 @@ mod tests {
     #[test]
     fn test_exact_match_with_spaces() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Visual   Studio   Code".to_string(), // Multiple spaces
-            class:   "VSCode".to_string(),
-            owner:   "Code.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Visual   Studio   Code".to_string(), // Multiple spaces
+            class: "VSCode".to_string(),
+            owner: "Code.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1822,11 +1840,11 @@ mod tests {
     #[test]
     fn test_fuzzy_match_short_pattern() {
         let windows = vec![WindowInfo {
-            id:      "1".to_string(),
-            title:   "Microsoft Visual Studio".to_string(),
-            class:   "Test".to_string(),
-            owner:   "devenv.exe".to_string(),
-            pid:     1234,
+            id: "1".to_string(),
+            title: "Microsoft Visual Studio".to_string(),
+            class: "Test".to_string(),
+            owner: "devenv.exe".to_string(),
+            pid: 1234,
             backend: BackendType::Windows,
         }];
 
@@ -1840,19 +1858,19 @@ mod tests {
     fn test_list_all_window_matching_strategies() {
         let windows = vec![
             WindowInfo {
-                id:      "1".to_string(),
-                title:   "Notepad - Document1.txt".to_string(),
-                class:   "Notepad".to_string(),
-                owner:   "notepad.exe".to_string(),
-                pid:     1234,
+                id: "1".to_string(),
+                title: "Notepad - Document1.txt".to_string(),
+                class: "Notepad".to_string(),
+                owner: "notepad.exe".to_string(),
+                pid: 1234,
                 backend: BackendType::Windows,
             },
             WindowInfo {
-                id:      "2".to_string(),
-                title:   "Visual Studio Code".to_string(),
-                class:   "Chrome_WidgetWin_1".to_string(),
-                owner:   "Code.exe".to_string(),
-                pid:     5678,
+                id: "2".to_string(),
+                title: "Visual Studio Code".to_string(),
+                class: "Chrome_WidgetWin_1".to_string(),
+                owner: "Code.exe".to_string(),
+                pid: 5678,
                 backend: BackendType::Windows,
             },
         ];

@@ -118,11 +118,11 @@ use crate::{
 #[derive(Debug)]
 pub struct MockBackend {
     /// Optional delay to simulate async operation timing
-    delay:           Option<Duration>,
+    delay: Option<Duration>,
     /// Optional error to inject for testing error handling
     error_injection: Option<CaptureError>,
     /// Predefined mock windows
-    windows:         Vec<WindowInfo>,
+    windows: Vec<WindowInfo>,
 }
 
 impl MockBackend {
@@ -142,9 +142,9 @@ impl MockBackend {
     /// ```
     pub fn new() -> Self {
         Self {
-            delay:           None,
+            delay: None,
             error_injection: None,
-            windows:         Self::create_mock_windows(),
+            windows: Self::create_mock_windows(),
         }
     }
 
@@ -247,7 +247,7 @@ impl MockBackend {
                 CaptureError::PermissionDenied { platform, backend } => {
                     CaptureError::PermissionDenied {
                         platform: platform.clone(),
-                        backend:  *backend,
+                        backend: *backend,
                     }
                 }
                 CaptureError::EncodingFailed { format, reason } => CaptureError::EncodingFailed {
@@ -260,7 +260,7 @@ impl MockBackend {
                 CaptureError::InvalidParameter { parameter, reason } => {
                     CaptureError::InvalidParameter {
                         parameter: parameter.clone(),
-                        reason:    reason.clone(),
+                        reason: reason.clone(),
                     }
                 }
                 CaptureError::BackendNotAvailable { backend } => {
@@ -276,7 +276,7 @@ impl MockBackend {
                 CaptureError::KeyringOperationFailed { operation, reason } => {
                     CaptureError::KeyringOperationFailed {
                         operation: operation.clone(),
-                        reason:    reason.clone(),
+                        reason: reason.clone(),
                     }
                 }
                 CaptureError::TokenNotFound { source_id } => CaptureError::TokenNotFound {
@@ -467,7 +467,7 @@ mod tests {
     fn test_mock_backend_with_error() {
         let error = CaptureError::PermissionDenied {
             platform: "test".to_string(),
-            backend:  BackendType::None,
+            backend: BackendType::None,
         };
         let backend = MockBackend::new().with_error(error);
         assert!(backend.error_injection.is_some());
@@ -641,7 +641,7 @@ mod tests {
     async fn test_capture_window_with_error_injection() {
         let error = CaptureError::PermissionDenied {
             platform: "test".to_string(),
-            backend:  BackendType::None,
+            backend: BackendType::None,
         };
         let backend = MockBackend::new().with_error(error);
 
@@ -760,7 +760,7 @@ mod tests {
     async fn test_error_injection_flow() {
         let error = CaptureError::PermissionDenied {
             platform: "test".to_string(),
-            backend:  BackendType::None,
+            backend: BackendType::None,
         };
         let backend = MockBackend::new().with_error(error);
 

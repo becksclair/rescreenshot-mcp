@@ -8,19 +8,19 @@
 //!
 //! - X11 display server ($DISPLAY must be set)
 //! - At least one window open in the X11 session
-//! - Compile with `--features linux-x11`
+//! - Linux build (X11 session)
 //!
 //! # Running Tests
 //!
 //! ```bash
 //! # Run all X11 integration tests
-//! DISPLAY=:0 cargo test --test x11_integration_tests --features linux-x11 -- --ignored --nocapture
+//! DISPLAY=:0 cargo test --test x11_integration_tests -- --ignored --nocapture
 //!
 //! # Run specific test
-//! DISPLAY=:0 cargo test --test x11_integration_tests test_list_windows_enumerate --features linux-x11 -- --ignored --nocapture
+//! DISPLAY=:0 cargo test --test x11_integration_tests test_list_windows_enumerate -- --ignored --nocapture
 //! ```
 
-#[cfg(all(target_os = "linux", feature = "linux-x11"))]
+#[cfg(target_os = "linux")]
 mod tests {
     use std::time::Instant;
 
@@ -105,8 +105,8 @@ mod tests {
                 .expect("resolve_target failed")
         });
 
-        tracing::info!("Resolved window: {}", handle.id);
-        assert_eq!(handle.id, first_window.id);
+        tracing::info!("Resolved window: {}", handle);
+        assert_eq!(handle, first_window.id);
     }
 
     #[tokio::test]
@@ -288,13 +288,15 @@ mod tests {
         let full_len = full_bytes.len();
 
         // Capture with region (top-left 200x200 pixels)
-        let mut region_opts = CaptureOptions::default();
-        region_opts.region = Some(screenshot_mcp::model::Region {
-            x:      0,
-            y:      0,
-            width:  200,
-            height: 200,
-        });
+        let region_opts = CaptureOptions {
+            region: Some(screenshot_mcp::model::Region {
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 200,
+            }),
+            ..Default::default()
+        };
 
         let region_image = measure("capture_window_with_region", || {
             tokio::runtime::Handle::current()
@@ -378,8 +380,10 @@ mod tests {
         let normal_len = normal_bytes.len();
 
         // Capture with 50% scale
-        let mut scaled_opts = CaptureOptions::default();
-        scaled_opts.scale = 0.5;
+        let scaled_opts = CaptureOptions {
+            scale: 0.5,
+            ..Default::default()
+        };
 
         let scaled_image = measure("capture_window_with_scale", || {
             tokio::runtime::Handle::current()
@@ -450,7 +454,7 @@ mod tests {
     }
 }
 
-#[cfg(not(all(target_os = "linux", feature = "linux-x11")))]
+#[cfg(not(target_os = "linux"))]
 fn main() {
-    println!("X11 integration tests require --features linux-x11");
+    println!("X11 integration tests only run on Linux.");
 }

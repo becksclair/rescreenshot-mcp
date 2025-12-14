@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rmcp::model::CallToolResult;
-#[cfg(feature = "windows-backend")]
+#[cfg(target_os = "windows")]
 use screenshot_mcp::capture::WindowsBackend;
 use screenshot_mcp::{
     capture::{CaptureFacade, MockBackend},
@@ -36,12 +36,12 @@ use screenshot_mcp::{
 /// and live testing with WindowsBackend.
 pub struct McpTestContext {
     /// The MCP server instance
-    pub server:     ScreenshotMcpServer,
+    pub server: ScreenshotMcpServer,
     /// Shared temp file manager for cleanup tracking
     pub temp_files: Arc<TempFileManager>,
     /// Backend used by the server (for inspection if needed)
     #[allow(dead_code)]
-    backend:        Arc<dyn CaptureFacade>,
+    backend: Arc<dyn CaptureFacade>,
 }
 
 impl McpTestContext {
@@ -96,14 +96,14 @@ impl McpTestContext {
 
     /// Create test context with WindowsBackend for live testing
     ///
-    /// Requires `windows-backend` feature and a real Windows desktop
+    /// Requires a real Windows desktop
     /// environment. Use `#[ignore]` attribute on tests using this
     /// constructor.
     ///
     /// # Panics
     /// Panics if WindowsBackend initialization fails (e.g., unsupported Windows
     /// version)
-    #[cfg(feature = "windows-backend")]
+    #[cfg(target_os = "windows")]
     pub fn new_with_windows_backend() -> Self {
         let backend: Arc<dyn CaptureFacade> = Arc::new(
             WindowsBackend::new().expect("WindowsBackend should initialize on supported Windows"),
@@ -211,9 +211,9 @@ pub struct CaptureResultParts {
     /// Decoded PNG/JPEG/WebP image bytes
     pub image_bytes: Vec<u8>,
     /// file:// URI extracted from resource link
-    pub file_uri:    String,
+    pub file_uri: String,
     /// Parsed metadata JSON
-    pub metadata:    serde_json::Value,
+    pub metadata: serde_json::Value,
 }
 
 /// Validation utilities for MCP tool responses
@@ -408,8 +408,8 @@ impl ContentValidator {
 #[derive(Debug, serde::Deserialize)]
 pub struct HealthCheckParsed {
     pub platform: String,
-    pub backend:  String,
-    pub ok:       bool,
+    pub backend: String,
+    pub ok: bool,
 }
 
 /// Parse health_check tool response

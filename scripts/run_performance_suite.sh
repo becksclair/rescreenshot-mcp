@@ -40,7 +40,7 @@ echo ""
 
 # Build measure-capture tool
 echo -e "${BLUE}Building performance measurement tool...${NC}"
-if cargo build --bin measure-capture --features perf-tests,linux-wayland --release --quiet; then
+if cargo build --bin measure-capture --features perf-tests --release --quiet; then
     echo -e "${GREEN}✓ Build successful${NC}"
 else
     echo -e "${RED}✗ Build failed${NC}"

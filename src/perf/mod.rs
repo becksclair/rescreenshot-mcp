@@ -49,9 +49,9 @@ pub struct PerformanceThresholds {
 impl Default for PerformanceThresholds {
     fn default() -> Self {
         Self {
-            prime_consent_max:     Duration::from_secs(5),
-            capture_latency_p95:   Duration::from_secs(2),
-            token_rotation_max:    Duration::from_millis(100),
+            prime_consent_max: Duration::from_secs(5),
+            capture_latency_p95: Duration::from_secs(2),
+            token_rotation_max: Duration::from_millis(100),
             memory_peak_max_bytes: 200 * 1024 * 1024, // 200MB
         }
     }
@@ -288,8 +288,8 @@ mod tests {
     fn test_timing_result_conversions() {
         let result = TimingResult {
             operation: "test".to_string(),
-            duration:  Duration::from_millis(1500),
-            success:   true,
+            duration: Duration::from_millis(1500),
+            success: true,
         };
 
         assert_eq!(result.duration_ms(), 1500);
