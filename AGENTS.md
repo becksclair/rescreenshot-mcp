@@ -13,7 +13,16 @@
 
 - Rust MCP server using `rmcp` SDK for stdio-based Model Context Protocol
 - Modules: `capture/` (platform backends), `mcp.rs` (MCP handler), `model.rs` (types), `error.rs` (error types with remediation hints), `util/`, `perf/` (performance testing)
-- Feature flags: `linux-wayland`, `linux-x11`, `windows-backend`, `macos-backend`, `image-processing` (default)
+- Feature flags: `image-processing` (default), `perf-tests`, `integration-tests`
+
+## Documentation
+
+- `docs/usage.md` — API reference, tool parameters, workflows
+- `docs/setup.md` — Platform installation (Linux/Windows)
+- `docs/troubleshooting.md` — Common errors and fixes
+- `docs/architecture.md` — Backend internals, diagrams, performance
+- `docs/development.md` — Testing, CI, releases, project structure
+- `specs/01-specification-v1.0.md` — Formal protocol specification
 
 ## Code Style
 

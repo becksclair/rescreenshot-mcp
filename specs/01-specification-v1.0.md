@@ -2,9 +2,9 @@
 
 ## Complete Feature Specification v1.0
 
-**Version:** 1.0  
-**Status:** Complete & Production Ready  
-**Last Updated:** 2025-11-29  
+**Version:** 1.0
+**Status:** Complete & Production Ready
+**Last Updated:** 2025-11-29
 **Timeline:** 6 weeks (M0-M6)
 
 ---
@@ -93,7 +93,7 @@ Full XDG Desktop Portal integration with:
 **Status:** Complete (2025-11-29)
 
 Full X11 capture implementation with:
-- **Window Enumeration:** EWMH atom queries (_NET_CLIENT_LIST, _NET_WM_NAME, WM_CLASS)
+- **Window Enumeration:** EWMH atom queries (_NET_CLIENT_LIST,_NET_WM_NAME, WM_CLASS)
 - **Multi-Strategy Matching:** Regex, substring, fuzzy (SkimMatcherV2), exact class/exe
 - **Direct Capture:** xcap integration with spawn_blocking for async safety
 - **Display Capture:** Full screen enumeration and primary screen capture
@@ -148,6 +148,7 @@ Full X11 capture implementation with:
 ### Available Tools
 
 #### `health_check`
+
 Verifies server health and detects platform/backend.
 
 **Request:**
@@ -167,6 +168,7 @@ Verifies server health and detects platform/backend.
 **Backends:** `wayland`, `x11`, `windows`, `macos`, `none`
 
 #### `prime_wayland_consent` (Wayland only)
+
 Opens XDG Desktop Portal for user authorization.
 
 **Request:**
@@ -194,6 +196,7 @@ Opens XDG Desktop Portal for user authorization.
 ```
 
 #### `list_windows`
+
 Enumerates available windows.
 
 - **Wayland:** Returns primed sources with synthetic entries
@@ -202,6 +205,7 @@ Enumerates available windows.
 - **macOS:** Enumerated via Cocoa (planned M5)
 
 #### `capture_window`
+
 Captures a specific window.
 
 **Parameters:**
@@ -218,7 +222,7 @@ Captures a specific window.
 
 ### System Design
 
-```
+```text
 MCP Client (Claude/Cursor)
          ↓ (stdio JSON-RPC)
     screenshot-mcp Server
@@ -438,14 +442,11 @@ RUST_LOG=screenshot_mcp=debug ./target/release/screenshot-mcp
 # Build with all features
 cargo build --all-features
 
-# Linux only
-cargo build --features linux-wayland,linux-x11
-
 # With integration tests
 cargo test --features integration-tests --no-run
 
 # X11 integration tests
-DISPLAY=:0 cargo test --test x11_integration_tests --features linux-x11 -- --ignored
+DISPLAY=:0 cargo test --test x11_integration_tests -- --ignored
 ```
 
 ---
@@ -538,6 +539,6 @@ MIT
 
 ---
 
-**Project Status:** Production Ready (M0-M3)  
-**Last Updated:** 2025-11-29  
+**Project Status:** Production Ready (M0-M3)
+**Last Updated:** 2025-11-29
 **Maintainer:** Project Team
