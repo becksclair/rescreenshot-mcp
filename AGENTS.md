@@ -77,7 +77,7 @@ cargo test --all-features
 
 ## Code Style
 
-- Edition 2021, MSRV 1.75, max line width 100
+- Edition 2024, MSRV 1.85, max line width 100
 - Imports: group by std/external/crate, use `imports_granularity = "Crate"`
 - Error handling: use `thiserror` for error types, `anyhow` for general errors; `CaptureResult<T>` alias
 - All errors must include `remediation_hint()` method with actionable user guidance
