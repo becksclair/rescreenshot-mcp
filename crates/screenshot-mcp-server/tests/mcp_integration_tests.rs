@@ -81,8 +81,11 @@ async fn test_capture_window_returns_valid_response() {
     let parts =
         ContentValidator::validate_capture_result(&result).expect("should have valid structure");
 
-    // Verify PNG magic bytes
-    assert!(ContentValidator::is_valid_png(&parts.image_bytes), "image should be valid PNG");
+    // Verify WebP magic bytes (default output format is WebP)
+    assert!(
+        ContentValidator::is_valid_webp(&parts.image_bytes),
+        "image should be valid WebP"
+    );
 
     // Verify file URI format
     assert!(parts.file_uri.starts_with("file://"), "should have file:// URI");
@@ -126,9 +129,9 @@ async fn test_capture_window_creates_temp_file() {
     assert!(std::path::Path::new(&path).exists(), "temp file should exist at: {}", path);
 }
 
-/// capture_window produces valid PNG with magic bytes
+/// capture_window produces valid WebP with magic bytes
 #[tokio::test]
-async fn test_capture_window_png_magic_bytes() {
+async fn test_capture_window_webp_magic_bytes() {
     let ctx = McpTestContext::new_with_mock();
 
     let result = ctx
@@ -136,19 +139,22 @@ async fn test_capture_window_png_magic_bytes() {
         .await
         .expect("capture should succeed");
 
-    let image_bytes =
-        ContentValidator::validate_base64_image(&result, "image/png").expect("should decode image");
+    let image_bytes = ContentValidator::validate_base64_image(&result, "image/webp")
+        .expect("should decode image");
 
-    // PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
-    assert!(image_bytes.len() >= 8, "image should have at least 8 bytes");
-    assert_eq!(image_bytes[0], 0x89, "PNG signature byte 0");
-    assert_eq!(image_bytes[1], 0x50, "PNG signature byte 1 (P)");
-    assert_eq!(image_bytes[2], 0x4e, "PNG signature byte 2 (N)");
-    assert_eq!(image_bytes[3], 0x47, "PNG signature byte 3 (G)");
-    assert_eq!(image_bytes[4], 0x0d, "PNG signature byte 4");
-    assert_eq!(image_bytes[5], 0x0a, "PNG signature byte 5");
-    assert_eq!(image_bytes[6], 0x1a, "PNG signature byte 6");
-    assert_eq!(image_bytes[7], 0x0a, "PNG signature byte 7");
+    // WebP magic bytes: RIFF....WEBP
+    assert!(image_bytes.len() >= 12, "image should have at least 12 bytes");
+    // "RIFF" header
+    assert_eq!(image_bytes[0], 0x52, "RIFF signature byte 0 (R)");
+    assert_eq!(image_bytes[1], 0x49, "RIFF signature byte 1 (I)");
+    assert_eq!(image_bytes[2], 0x46, "RIFF signature byte 2 (F)");
+    assert_eq!(image_bytes[3], 0x46, "RIFF signature byte 3 (F)");
+    // Bytes 4-7 are file size
+    // "WEBP" at offset 8
+    assert_eq!(image_bytes[8], 0x57, "WEBP signature byte 8 (W)");
+    assert_eq!(image_bytes[9], 0x45, "WEBP signature byte 9 (E)");
+    assert_eq!(image_bytes[10], 0x42, "WEBP signature byte 10 (B)");
+    assert_eq!(image_bytes[11], 0x50, "WEBP signature byte 11 (P)");
 }
 
 /// capture_window with missing selector fails with appropriate error
@@ -156,13 +162,7 @@ async fn test_capture_window_png_magic_bytes() {
 async fn test_capture_window_missing_selector_fails() {
     let ctx = McpTestContext::new_with_mock();
 
-    let result = ctx
-        .capture_window(CaptureWindowParams {
-            title_substring_or_regex: None,
-            class: None,
-            exe: None,
-        })
-        .await;
+    let result = ctx.capture_window(CaptureWindowParams::default()).await;
 
     assert!(result.is_err(), "should fail with no selector");
 
@@ -377,8 +377,8 @@ mod live_windows_tests {
             parts.image_bytes.len()
         );
 
-        // Verify PNG format
-        assert!(ContentValidator::is_valid_png(&parts.image_bytes), "should be valid PNG");
+        // Verify WebP format (default output)
+        assert!(ContentValidator::is_valid_webp(&parts.image_bytes), "should be valid WebP");
 
         println!(
             "Captured {} bytes, dimensions {:?}",
@@ -452,8 +452,8 @@ mod live_windows_tests {
         let parts =
             ContentValidator::validate_capture_result(&result).expect("should have valid result");
 
-        // Verify we got a real screenshot
-        assert!(ContentValidator::is_valid_png(&parts.image_bytes), "should be valid PNG");
+        // Verify we got a real screenshot (WebP format)
+        assert!(ContentValidator::is_valid_webp(&parts.image_bytes), "should be valid WebP");
         assert!(
             parts.image_bytes.len() > 10_000,
             "Cursor screenshot should be > 10KB, got {} bytes",

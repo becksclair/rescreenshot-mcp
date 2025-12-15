@@ -22,9 +22,9 @@ use std::sync::Arc;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rmcp::model::CallToolResult;
 #[cfg(target_os = "windows")]
-use screenshot_core::capture::WindowsBackend;
+use screenshot_core::capture::{WindowsBackend, composite_from_windows};
 use screenshot_core::{
-    capture::{CaptureFacade, MockBackend},
+    capture::{CompositeBackend, MockBackend, composite_from_mock},
     util::temp_files::TempFileManager,
 };
 use screenshot_mcp_server::mcp::{CaptureWindowParams, ScreenshotMcpServer};
@@ -41,7 +41,7 @@ pub struct McpTestContext {
     pub temp_files: Arc<TempFileManager>,
     /// Backend used by the server (for inspection if needed)
     #[allow(dead_code)]
-    backend: Arc<dyn CaptureFacade>,
+    backend: Arc<CompositeBackend>,
 }
 
 impl McpTestContext {
@@ -50,7 +50,8 @@ impl McpTestContext {
     /// This is the preferred constructor for most tests as it doesn't
     /// require a real display environment.
     pub fn new_with_mock() -> Self {
-        let backend: Arc<dyn CaptureFacade> = Arc::new(MockBackend::new());
+        let mock = Arc::new(MockBackend::new());
+        let backend = Arc::new(composite_from_mock(mock));
         let temp_files = Arc::new(TempFileManager::new());
         let server = ScreenshotMcpServer::new(Arc::clone(&backend), Arc::clone(&temp_files));
         Self {
@@ -84,7 +85,8 @@ impl McpTestContext {
     /// let ctx = McpTestContext::new_with_configured_mock(mock);
     /// ```
     pub fn new_with_configured_mock(mock: MockBackend) -> Self {
-        let backend: Arc<dyn CaptureFacade> = Arc::new(mock);
+        let mock = Arc::new(mock);
+        let backend = Arc::new(composite_from_mock(mock));
         let temp_files = Arc::new(TempFileManager::new());
         let server = ScreenshotMcpServer::new(Arc::clone(&backend), Arc::clone(&temp_files));
         Self {
@@ -105,9 +107,10 @@ impl McpTestContext {
     /// version)
     #[cfg(target_os = "windows")]
     pub fn new_with_windows_backend() -> Self {
-        let backend: Arc<dyn CaptureFacade> = Arc::new(
+        let windows = Arc::new(
             WindowsBackend::new().expect("WindowsBackend should initialize on supported Windows"),
         );
+        let backend = Arc::new(composite_from_windows(windows));
         let temp_files = Arc::new(TempFileManager::new());
         let server = ScreenshotMcpServer::new(Arc::clone(&backend), Arc::clone(&temp_files));
         Self {
@@ -144,8 +147,7 @@ impl McpTestContext {
     ) -> Result<CallToolResult, rmcp::model::ErrorData> {
         self.capture_window(CaptureWindowParams {
             title_substring_or_regex: Some(title.to_string()),
-            class: None,
-            exe: None,
+            ..Default::default()
         })
         .await
     }
@@ -156,9 +158,8 @@ impl McpTestContext {
         class: &str,
     ) -> Result<CallToolResult, rmcp::model::ErrorData> {
         self.capture_window(CaptureWindowParams {
-            title_substring_or_regex: None,
             class: Some(class.to_string()),
-            exe: None,
+            ..Default::default()
         })
         .await
     }
@@ -169,9 +170,8 @@ impl McpTestContext {
         exe: &str,
     ) -> Result<CallToolResult, rmcp::model::ErrorData> {
         self.capture_window(CaptureWindowParams {
-            title_substring_or_regex: None,
-            class: None,
             exe: Some(exe.to_string()),
+            ..Default::default()
         })
         .await
     }
@@ -381,7 +381,7 @@ impl ContentValidator {
             return Err("Result is marked as error".to_string());
         }
 
-        let image_bytes = Self::validate_base64_image(result, "image/png")?;
+        let image_bytes = Self::validate_base64_image(result, "image/webp")?;
         let file_uri = Self::validate_file_uri(result)?;
         let metadata = Self::validate_metadata(result, None, None, None)?;
 
@@ -397,6 +397,15 @@ impl ContentValidator {
     /// PNG files start with: 0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A
     pub fn is_valid_png(bytes: &[u8]) -> bool {
         bytes.len() >= 8 && bytes.starts_with(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    }
+
+    /// Verify WebP magic bytes
+    ///
+    /// WebP files start with: RIFF....WEBP
+    pub fn is_valid_webp(bytes: &[u8]) -> bool {
+        bytes.len() >= 12
+            && bytes.starts_with(&[0x52, 0x49, 0x46, 0x46]) // "RIFF"
+            && bytes[8..12] == [0x57, 0x45, 0x42, 0x50] // "WEBP"
     }
 }
 

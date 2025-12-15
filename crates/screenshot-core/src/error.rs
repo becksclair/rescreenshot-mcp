@@ -201,6 +201,15 @@ pub enum CaptureError {
     /// Target window was closed during capture
     #[error("Target window was closed or became invalid during capture")]
     WindowClosed,
+
+    /// Requested capability/feature is not supported by this backend
+    #[error("Feature '{feature}' is not supported by backend {backend}")]
+    NotSupported {
+        /// Name of the unsupported feature
+        feature: String,
+        /// Backend that doesn't support the feature
+        backend: BackendType,
+    },
 }
 
 impl CaptureError {
@@ -339,6 +348,21 @@ impl CaptureError {
                 "The target window was closed or destroyed while attempting capture. Ensure the \
                  window remains open during capture, or use display capture as an alternative."
             }
+            CaptureError::NotSupported { feature, backend } => match (feature.as_str(), backend) {
+                ("window_enumeration", BackendType::Wayland) => {
+                    "Wayland does not support window enumeration due to its security model. Use \
+                     prime_wayland_consent to select a window through the desktop portal, then \
+                     capture using the returned source ID."
+                }
+                ("window_enumeration", _) => "Window enumeration is not supported on this backend.",
+                ("wayland_restore", _) => {
+                    "Wayland restore tokens are only available on the Wayland backend."
+                }
+                _ => {
+                    "This feature is not supported by the current backend. Check the backend \
+                     capabilities to see which features are available."
+                }
+            },
         }
     }
 
@@ -535,6 +559,25 @@ impl CaptureError {
                 })),
                 is_transient: true,
                 category: ErrorCategory::NotFound,
+            },
+            CaptureError::NotSupported { feature, backend } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: match (feature.as_str(), backend) {
+                    ("window_enumeration", BackendType::Wayland) => RecoveryAction::CallTool,
+                    _ => RecoveryAction::None,
+                },
+                suggested_tool: match (feature.as_str(), backend) {
+                    ("window_enumeration", BackendType::Wayland) => {
+                        Some("prime_wayland_consent".to_string())
+                    }
+                    _ => None,
+                },
+                tool_params: Some(serde_json::json!({
+                    "unsupported_feature": feature,
+                    "backend": format!("{:?}", backend),
+                })),
+                is_transient: false,
+                category: ErrorCategory::Unavailable,
             },
         }
     }

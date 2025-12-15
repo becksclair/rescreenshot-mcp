@@ -2,6 +2,7 @@
 //!
 //! These tests require a Windows desktop environment with actual windows and
 //! open applications. Tests run automatically on Windows when running `cargo test`.
+
 //!
 //! # Running Tests
 //!
@@ -44,7 +45,7 @@ use common::windows_helpers::{
     WindowsTestContext, measure_timing, save_test_image, validate_image_pixels,
 };
 use screenshot_core::{
-    capture::{CaptureFacade, windows_backend::WindowsBackend},
+    capture::{ScreenCapture, WindowEnumerator, WindowResolver, windows_backend::WindowsBackend},
     model::{CaptureOptions, Region, WindowSelector},
 };
 
@@ -70,7 +71,7 @@ async fn test_list_windows_real() {
 
 /// Test that we can resolve a window by title
 #[tokio::test]
-async fn test_resolve_target_real() {
+async fn test_resolve_real() {
     let backend = WindowsBackend::new().expect("Failed to create backend");
 
     // First list windows to find one we can target
@@ -85,7 +86,7 @@ async fn test_resolve_target_real() {
     // Try to resolve by title
     let selector = WindowSelector::by_title(&first_window.title);
     let handle = backend
-        .resolve_target(&selector)
+        .resolve(&selector)
         .await
         .expect("Failed to resolve target");
 
@@ -272,7 +273,7 @@ async fn test_resolve_by_class() {
 
     let selector = WindowSelector::by_class(&first_window.class);
     let handle = backend
-        .resolve_target(&selector)
+        .resolve(&selector)
         .await
         .expect("Failed to resolve by class");
 
@@ -301,7 +302,7 @@ async fn test_resolve_by_exe() {
 
     let selector = WindowSelector::by_exe(&first_window.owner);
     let handle = backend
-        .resolve_target(&selector)
+        .resolve(&selector)
         .await
         .expect("Failed to resolve by exe");
 
@@ -347,9 +348,9 @@ async fn test_list_windows_enumeration_valid() {
     }
 }
 
-/// Enhanced: Test resolve_target with various strategies
+/// Enhanced: Test resolve with various strategies
 #[tokio::test]
-async fn test_resolve_target_multiple_strategies() {
+async fn test_resolve_multiple_strategies() {
     let backend = WindowsBackend::new().expect("Failed to create backend");
 
     let windows = backend
@@ -368,7 +369,7 @@ async fn test_resolve_target_multiple_strategies() {
     // Strategy 1: By full title
     if !target_win.title.is_empty() {
         let selector = WindowSelector::by_title(&target_win.title);
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         assert!(result.is_ok(), "Should resolve by full title");
         println!("✓ Resolved by full title");
     }
@@ -377,7 +378,7 @@ async fn test_resolve_target_multiple_strategies() {
     if target_win.title.len() > 3 {
         let substr = &target_win.title[0..target_win.title.len().min(10)];
         let selector = WindowSelector::by_title(substr);
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         println!(
             "  Title substring '{}': {}",
             substr,
@@ -388,7 +389,7 @@ async fn test_resolve_target_multiple_strategies() {
     // Strategy 3: By class (if available)
     if !target_win.class.is_empty() {
         let selector = WindowSelector::by_class(&target_win.class);
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         println!(
             "  Class match '{}': {}",
             target_win.class,
@@ -399,7 +400,7 @@ async fn test_resolve_target_multiple_strategies() {
     // Strategy 4: By exe (if available)
     if !target_win.owner.is_empty() {
         let selector = WindowSelector::by_exe(&target_win.owner);
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         println!(
             "  Exe match '{}': {}",
             target_win.owner,
@@ -674,22 +675,23 @@ async fn test_capture_invalid_window_handle() {
 /// Enhanced: Capabilities check
 #[tokio::test]
 async fn test_capabilities_report() {
+    use screenshot_core::capture::BackendCapabilities;
+
     let backend = WindowsBackend::new().expect("Failed to create backend");
-    let caps = backend.capabilities();
 
     println!("Windows Backend Capabilities:");
-    println!("  Window Capture: {}", caps.supports_window_capture);
-    println!("  Display Capture: {}", caps.supports_display_capture);
-    println!("  Region Crop: {}", caps.supports_region);
-    println!("  Cursor: {}", caps.supports_cursor);
-    println!("  Wayland Restore: {}", caps.supports_wayland_restore);
+    println!("  Window Capture: {}", backend.supports_window_enumeration());
+    println!("  Display Capture: {}", backend.supports_display_capture());
+    println!("  Region Crop: {}", backend.supports_region());
+    println!("  Cursor: {}", backend.supports_cursor());
+    println!("  Wayland Restore: {}", backend.supports_wayland_restore());
 
     // Windows should support all except Wayland
-    assert!(caps.supports_window_capture, "Should support window capture");
-    assert!(caps.supports_display_capture, "Should support display capture");
-    assert!(caps.supports_region, "Should support region cropping");
-    assert!(caps.supports_cursor, "Should support cursor capture");
-    assert!(!caps.supports_wayland_restore, "Should not require Wayland restore");
+    assert!(backend.supports_window_enumeration(), "Should support window capture");
+    assert!(backend.supports_display_capture(), "Should support display capture");
+    assert!(backend.supports_region(), "Should support region cropping");
+    assert!(backend.supports_cursor(), "Should support cursor capture");
+    assert!(!backend.supports_wayland_restore(), "Should not require Wayland restore");
 }
 
 // ============ Visual Verification Tests ============

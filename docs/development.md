@@ -34,17 +34,17 @@ just ci  # or: cargo fmt --check && cargo clippy && cargo test
 
 ```mermaid
 flowchart LR
-    subgraph Unit["Unit Tests - 229"]
-        U1[KeyStore]
-        U2[Types]
-        U3[Matching]
-        U4[Errors]
+    subgraph Unit["Unit Tests - 400+"]
+        U1[screenshot-core: 283]
+        U2[screenshot-mcp-server: 53]
+        U3[Doctests: 43]
     end
 
-    subgraph Integration["Integration Tests - 27"]
+    subgraph Integration["Integration Tests - 39"]
         I1[Wayland - 6]
         I2[X11 - 6]
         I3[Windows - 21]
+        I4[MCP - 18]
     end
 
     subgraph Perf["Performance Tests"]
@@ -115,11 +115,11 @@ assert!(cropped.len() < full.len());
 
 | Format | Speed | Size | Use Case |
 |--------|-------|------|----------|
-| PNG | Slow | Large | Text-heavy content |
-| JPEG | Fast | Small | General UI (recommended) |
-| WebP | Medium | Smallest | Best compression/quality |
+| PNG | Slow | Large | Text-heavy content, lossless |
+| JPEG | Fast | Small | Speed-critical scenarios |
+| WebP | Medium | Smallest | Best compression/quality (default) |
 
-**Recommendation:** `format: "jpeg", quality: 80` for agent interactions.
+**Recommendation:** Use default WebP (`format: "webp", quality: 80`) for agent interactions. Switch to JPEG only when latency is critical.
 
 #### 2. Scaling
 
@@ -215,10 +215,10 @@ Integration tests are **not** run in CI (no display environment).
 ```bash
 # 1. Commit changes
 git add .
-git commit -m "chore: prepare release v0.5.0"
+git commit -m "chore: prepare release v0.6.0"
 
 # 2. Tag release
-git tag v0.5.0
+git tag v0.6.0
 git push origin main --tags
 ```
 
@@ -251,25 +251,33 @@ GitHub Actions will:
 
 ```text
 screenshot-mcp/
-├── src/
-│   ├── main.rs           # Entry point
-│   ├── lib.rs            # Library exports
-│   ├── mcp.rs            # MCP handler
-│   ├── model.rs          # Types (WindowInfo, etc.)
-│   ├── error.rs          # CaptureError + hints
-│   ├── capture/
-│   │   ├── mod.rs        # CaptureFacade trait
-│   │   ├── wayland_backend.rs
-│   │   ├── x11_backend.rs
-│   │   ├── windows_backend.rs
-│   │   └── image_buffer.rs
-│   ├── util/
-│   │   ├── key_store.rs  # Token storage
-│   │   └── encode.rs     # Image encoding
-│   └── perf/             # Performance testing
-├── tests/
-│   ├── mcp_integration_tests.rs
-│   ├── x11_integration_tests.rs
+├── crates/
+│   ├── screenshot-cli/       # CLI binary
+│   │   └── src/main.rs
+│   ├── screenshot-core/      # Core library
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── model.rs      # Types (WindowInfo, etc.)
+│   │       ├── error.rs      # CaptureError + hints
+│   │       ├── capture/
+│   │       │   ├── mod.rs
+│   │       │   ├── traits.rs # Capability traits (v0.6.0)
+│   │       │   ├── composite.rs # CompositeBackend
+│   │       │   ├── mock.rs
+│   │       │   ├── wayland_backend.rs
+│   │       │   ├── x11_backend.rs
+│   │       │   ├── windows_backend.rs
+│   │       │   └── image_buffer.rs
+│   │       └── util/
+│   │           ├── key_store.rs
+│   │           └── encode.rs
+│   └── screenshot-mcp-server/ # MCP server
+│       └── src/
+│           ├── lib.rs
+│           ├── main.rs
+│           ├── mcp.rs        # Tool handlers
+│           └── mcp_content.rs
+├── tests/                    # Workspace integration tests
 │   └── windows_integration_tests.rs
 ├── scripts/
 │   ├── run_wayland_integration_tests.sh
@@ -279,7 +287,7 @@ screenshot-mcp/
     ├── setup.md
     ├── troubleshooting.md
     ├── architecture.md
-    └── development.md  # You are here
+    └── development.md        # You are here
 ```
 
 ---

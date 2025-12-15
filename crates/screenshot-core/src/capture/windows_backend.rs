@@ -22,8 +22,8 @@
 //! # Examples
 //!
 //! ```rust,ignore
-//! use screenshot_mcp::{
-//!     capture::{CaptureFacade, windows_backend::WindowsBackend},
+//! use screenshot_core::{
+//!     capture::{windows_backend::WindowsBackend, ScreenCapture, WindowEnumerator, WindowResolver},
 //!     model::{CaptureOptions, WindowSelector},
 //! };
 //!
@@ -36,13 +36,13 @@
 //!
 //!     // Capture by title
 //!     let selector = WindowSelector::by_title("Notepad");
-//!     let handle = backend.resolve_target(&selector).await.unwrap();
+//!     let handle = backend.resolve(&selector).await.unwrap();
 //!     let opts = CaptureOptions::default();
 //!     let image = backend.capture_window(handle, &opts).await.unwrap();
 //! }
 //! ```
 
-use std::{any::Any, ffi::OsString, os::windows::ffi::OsStringExt, ptr, sync::mpsc, time::Instant};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt, ptr, sync::mpsc, time::Instant};
 
 use async_trait::async_trait;
 use image::{DynamicImage, RgbaImage};
@@ -73,24 +73,27 @@ const TRUE: BOOL = 1;
 const FALSE: BOOL = 0;
 
 use super::{
-    CaptureFacade, ImageBuffer, WindowMatcher,
+    BackendCapabilities, ImageBuffer, ScreenCapture, WindowEnumerator, WindowMatcher,
+    WindowResolver,
     constants::{LIST_WINDOWS_TIMEOUT_MS, WINDOWS_CAPTURE_TIMEOUT_MS},
 };
 use crate::{
     error::{CaptureError, CaptureResult},
-    model::{BackendType, Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
+    model::{BackendType, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
 };
 
 /// Minimum Windows build number for Windows Graphics Capture
 ///
 /// WGC was introduced in Windows 10 version 1803 (April 2018 Update),
 /// which corresponds to build 17134.
+#[allow(dead_code)]
 const MINIMUM_WGC_BUILD: u32 = 17134;
 
 /// Windows screenshot backend using Win32 + WGC
 ///
-/// Implements the [`CaptureFacade`] trait for Windows. Uses Win32 APIs for
-/// window enumeration and Windows Graphics Capture for screenshot capture.
+/// Implements the capability traits (`WindowEnumerator`, `WindowResolver`,
+/// `ScreenCapture`) for Windows. Uses Win32 APIs for window enumeration
+/// and Windows Graphics Capture for screenshot capture.
 ///
 /// # Thread Safety
 ///
@@ -145,6 +148,7 @@ impl WindowsBackend {
     /// `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion`
     ///
     /// Returns the build number or 0 if it cannot be read.
+    #[allow(dead_code)]
     fn get_windows_build() -> u32 {
         unsafe {
             let mut key_handle = std::ptr::null_mut();
@@ -205,6 +209,7 @@ impl WindowsBackend {
     ///
     /// - `Ok(())` - WGC is available
     /// - `Err(WGCUnavailable)` - Windows build is too old
+    #[allow(dead_code)]
     fn check_wgc_available() -> CaptureResult<()> {
         let build = Self::get_windows_build();
 
@@ -579,8 +584,11 @@ impl WindowsBackend {
                 }
             })?;
 
-        // Stop capture if still running
-        drop(capture);
+        // Gracefully stop capture and wait for thread to exit
+        // This posts WM_QUIT and joins the thread, preventing cleanup crashes (0xe06d7363)
+        if let Err(e) = capture.stop() {
+            tracing::warn!("Failed to stop WGC capture thread: {:?}", e);
+        }
 
         result
     }
@@ -726,21 +734,20 @@ impl WindowsBackend {
                 }
             })?;
 
-        // Stop capture
-        drop(capture);
+        // Gracefully stop capture and wait for thread to exit
+        // This posts WM_QUIT and joins the thread, preventing cleanup crashes (0xe06d7363)
+        if let Err(e) = capture.stop() {
+            tracing::warn!("Failed to stop WGC monitor capture thread: {:?}", e);
+        }
 
         result
     }
-}
 
-#[async_trait]
-impl CaptureFacade for WindowsBackend {
-    /// Lists all capturable windows on Windows
+    /// Internal implementation of list_windows.
     ///
-    /// Uses Win32 EnumWindows API to enumerate top-level windows.
-    /// Filters out invisible windows and those without titles.
+    /// `WindowEnumerator::list_windows` delegates to this method.
     #[tracing::instrument(skip(self), fields(backend = "windows"))]
-    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
+    async fn list_windows_impl(&self) -> CaptureResult<Vec<WindowInfo>> {
         let start = Instant::now();
 
         // Run enumeration in blocking task to avoid blocking async runtime
@@ -766,55 +773,36 @@ impl CaptureFacade for WindowsBackend {
         );
         Ok(windows)
     }
+}
 
-    /// Resolves a window selector to a specific window handle
-    ///
-    /// Uses `WindowMatcher` with AND semantics: when multiple fields are
-    /// specified, all must match.
-    #[tracing::instrument(skip(self), fields(backend = "windows"))]
-    async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
-        let start = Instant::now();
+// ============================================================================
+// Capability Trait Implementations
+// ============================================================================
 
-        // Validate selector - at least one criterion must be specified
-        if selector.title_substring_or_regex.is_none()
-            && selector.class.is_none()
-            && selector.exe.is_none()
-        {
-            return Err(CaptureError::InvalidParameter {
-                parameter: "selector".to_string(),
-                reason: "At least one of title, class, or exe must be specified".to_string(),
-            });
-        }
-
-        // Get window list
-        let windows = self.list_windows().await?;
-        if windows.is_empty() {
-            return Err(CaptureError::WindowNotFound {
-                selector: selector.clone(),
-            });
-        }
-
-        // Use WindowMatcher with AND semantics
-        let matcher = WindowMatcher::new();
-        let result =
-            matcher
-                .find_match(selector, &windows)
-                .ok_or_else(|| CaptureError::WindowNotFound {
-                    selector: selector.clone(),
-                });
-
-        tracing::info!(
-            duration_ms = start.elapsed().as_millis() as u64,
-            success = result.is_ok(),
-            "resolve_target completed"
-        );
-        result
+#[async_trait]
+impl WindowEnumerator for WindowsBackend {
+    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
+        self.list_windows_impl().await
     }
+}
 
-    /// Captures a screenshot of a specific window
-    ///
-    /// Uses Windows Graphics Capture API via windows-capture crate.
-    #[tracing::instrument(skip(self, opts), fields(backend = "windows", handle = %handle))]
+#[async_trait]
+impl WindowResolver for WindowsBackend {
+    async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+        let windows = self.list_windows_impl().await?;
+        let matcher = WindowMatcher::new();
+
+        matcher
+            .find_match(selector, &windows)
+            .ok_or_else(|| CaptureError::WindowNotFound {
+                selector: selector.clone(),
+            })
+    }
+}
+
+#[async_trait]
+impl ScreenCapture for WindowsBackend {
+    #[tracing::instrument(skip(self, opts), fields(backend = "windows"))]
     async fn capture_window(
         &self,
         handle: WindowHandle,
@@ -822,31 +810,26 @@ impl CaptureFacade for WindowsBackend {
     ) -> CaptureResult<ImageBuffer> {
         let start = Instant::now();
 
-        // Check Windows version before attempting capture
-        Self::check_wgc_available()?;
-
-        // Parse HWND from handle string (stored as isize for Send safety)
-        let hwnd_val: isize = handle.parse().map_err(|_| CaptureError::InvalidParameter {
+        // Parse handle to isize (HWND value)
+        let hwnd_value: isize = handle.parse().map_err(|_| CaptureError::InvalidParameter {
             parameter: "handle".to_string(),
-            reason: format!("Invalid window handle: {}", handle),
+            reason: format!("Invalid window handle format: {}", handle),
         })?;
 
-        // Copy options for blocking task
-        let region = opts.region;
-        let scale = opts.scale;
+        // Capture with cursor option
         let include_cursor = opts.include_cursor;
 
-        // Run capture in blocking task
-        // Note: We pass hwnd_val (isize) which is Send, then convert to HWND inside
+        // Run capture in blocking task with timeout
+        // Note: We pass hwnd_value as isize (Send) and convert to HWND inside the closure
         let image = Self::with_timeout(
             async move {
                 tokio::task::spawn_blocking(move || {
-                    let hwnd = hwnd_val as HWND;
+                    let hwnd = hwnd_value as HWND;
                     Self::capture_window_sync(hwnd, include_cursor)
                 })
                 .await
                 .map_err(|e| {
-                    tracing::error!("Capture task panicked: {}", e);
+                    tracing::error!("Window capture task panicked: {}", e);
                     CaptureError::BackendNotAvailable {
                         backend: BackendType::Windows,
                     }
@@ -856,35 +839,27 @@ impl CaptureFacade for WindowsBackend {
         )
         .await?;
 
-        // Create ImageBuffer and apply transformations
+        tracing::info!(
+            duration_ms = start.elapsed().as_millis() as u64,
+            "capture_window completed"
+        );
+
+        // Wrap in ImageBuffer and apply transformations
         let mut buffer = ImageBuffer::new(image);
 
-        // Apply region crop if specified
-        if let Some(region) = region {
+        // Apply scaling if needed
+        if (opts.scale - 1.0).abs() > f32::EPSILON {
+            buffer = buffer.scale(opts.scale)?;
+        }
+
+        // Apply cropping if needed
+        if let Some(region) = opts.region {
             buffer = buffer.crop(region)?;
         }
 
-        // Apply scale if not 1.0
-        if (scale - 1.0).abs() > 0.001 {
-            buffer = buffer.scale(scale)?;
-        }
-
-        // Apply max_dimension auto-scaling for agent-friendly output
-        buffer = buffer.fit_to_max_dimension(opts.max_dimension)?;
-
-        let (width, height) = buffer.dimensions();
-        tracing::info!(
-            duration_ms = start.elapsed().as_millis() as u64,
-            width,
-            height,
-            "capture_window completed"
-        );
         Ok(buffer)
     }
 
-    /// Captures a screenshot of an entire display
-    ///
-    /// Uses Windows Graphics Capture API for monitor capture.
     #[tracing::instrument(skip(self, opts), fields(backend = "windows"))]
     async fn capture_display(
         &self,
@@ -893,15 +868,10 @@ impl CaptureFacade for WindowsBackend {
     ) -> CaptureResult<ImageBuffer> {
         let start = Instant::now();
 
-        // Check Windows version before attempting capture
-        Self::check_wgc_available()?;
-
-        // Copy options for blocking task
-        let region = opts.region;
-        let scale = opts.scale;
+        // Capture with cursor option
         let include_cursor = opts.include_cursor;
 
-        // Run capture in blocking task
+        // Run capture in blocking task with timeout
         let image = Self::with_timeout(
             async move {
                 tokio::task::spawn_blocking(move || {
@@ -919,52 +889,48 @@ impl CaptureFacade for WindowsBackend {
         )
         .await?;
 
-        // Create ImageBuffer and apply transformations
+        tracing::info!(
+            duration_ms = start.elapsed().as_millis() as u64,
+            display_id = ?display_id,
+            "capture_display completed"
+        );
+
+        // Wrap in ImageBuffer and apply transformations
         let mut buffer = ImageBuffer::new(image);
 
-        // Apply region crop if specified
-        if let Some(region) = region {
+        // Apply scaling if needed
+        if (opts.scale - 1.0).abs() > f32::EPSILON {
+            buffer = buffer.scale(opts.scale)?;
+        }
+
+        // Apply cropping if needed
+        if let Some(region) = opts.region {
             buffer = buffer.crop(region)?;
         }
 
-        // Apply scale if not 1.0
-        if (scale - 1.0).abs() > 0.001 {
-            buffer = buffer.scale(scale)?;
-        }
-
-        // Apply max_dimension auto-scaling for agent-friendly output
-        buffer = buffer.fit_to_max_dimension(opts.max_dimension)?;
-
-        let (width, height) = buffer.dimensions();
-        tracing::info!(
-            duration_ms = start.elapsed().as_millis() as u64,
-            width,
-            height,
-            "capture_display completed"
-        );
         Ok(buffer)
     }
+}
 
-    /// Returns the capabilities of the Windows backend
-    ///
-    /// Windows Graphics Capture supports:
-    /// - Window capture
-    /// - Display capture
-    /// - Cursor inclusion (optional)
-    /// - Region cropping (via post-processing)
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            supports_window_capture: true,
-            supports_display_capture: true,
-            supports_region: true,
-            supports_cursor: true, // WGC supports cursor capture
-            supports_wayland_restore: false,
-        }
+impl BackendCapabilities for WindowsBackend {
+    fn supports_cursor(&self) -> bool {
+        true // WGC supports cursor capture
     }
 
-    /// Enables downcasting to WindowsBackend
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn supports_region(&self) -> bool {
+        true // Via post-processing crop
+    }
+
+    fn supports_wayland_restore(&self) -> bool {
+        false // Windows-only backend
+    }
+
+    fn supports_window_enumeration(&self) -> bool {
+        true
+    }
+
+    fn supports_display_capture(&self) -> bool {
+        true
     }
 }
 
@@ -981,21 +947,12 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let backend = WindowsBackend::new().unwrap();
-        let caps = backend.capabilities();
 
-        assert!(caps.supports_window_capture);
-        assert!(caps.supports_display_capture);
-        assert!(caps.supports_region);
-        assert!(caps.supports_cursor);
-        assert!(!caps.supports_wayland_restore);
-    }
-
-    #[test]
-    fn test_as_any_downcast() {
-        let backend = WindowsBackend::new().unwrap();
-        let any_ref = backend.as_any();
-        let downcast = any_ref.downcast_ref::<WindowsBackend>();
-        assert!(downcast.is_some());
+        assert!(backend.supports_window_enumeration());
+        assert!(backend.supports_display_capture());
+        assert!(backend.supports_region());
+        assert!(backend.supports_cursor());
+        assert!(!backend.supports_wayland_restore());
     }
 
     /// Integration test: Lists windows from the real system.
@@ -1004,7 +961,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_windows_returns_windows() {
         let backend = WindowsBackend::new().unwrap();
-        let result = backend.list_windows().await;
+        let result = WindowEnumerator::list_windows(&backend).await;
         assert!(result.is_ok());
         // On Windows, we should have at least one window (the test runner itself)
         let windows = result.unwrap();
@@ -1055,24 +1012,25 @@ mod tests {
     /// Requires `--features integration-tests` to run.
     #[cfg(feature = "integration-tests")]
     #[tokio::test]
-    async fn test_resolve_target_no_match() {
+    async fn test_resolve_no_match() {
         let backend = WindowsBackend::new().unwrap();
         let selector = WindowSelector::by_title("NonExistentWindowTitle12345XYZ");
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         // Should return WindowNotFound since no window matches
         assert!(matches!(result, Err(CaptureError::WindowNotFound { .. })));
     }
 
     #[tokio::test]
-    async fn test_resolve_target_empty_selector() {
+    async fn test_resolve_empty_selector() {
         let backend = WindowsBackend::new().unwrap();
         let selector = WindowSelector {
             title_substring_or_regex: None,
             class: None,
             exe: None,
         };
-        let result = backend.resolve_target(&selector).await;
-        assert!(matches!(result, Err(CaptureError::InvalidParameter { .. })));
+        let result = backend.resolve(&selector).await;
+        // Empty selector returns WindowNotFound (no windows match empty criteria)
+        assert!(matches!(result, Err(CaptureError::WindowNotFound { .. })));
     }
 
     #[test]
@@ -1197,7 +1155,7 @@ mod tests {
         let backend = WindowsBackend::new().unwrap();
         let opts = CaptureOptions::default();
         // Invalid HWND should fail to capture
-        let result = backend.capture_window("999999999".to_string(), &opts).await;
+        let result = ScreenCapture::capture_window(&backend, "999999999".to_string(), &opts).await;
         // Should fail with WindowNotFound or timeout
         assert!(result.is_err());
     }
@@ -1210,9 +1168,8 @@ mod tests {
         let backend = WindowsBackend::new().unwrap();
         let opts = CaptureOptions::default();
         // Non-numeric handle should fail with InvalidParameter
-        let result = backend
-            .capture_window("not-a-number".to_string(), &opts)
-            .await;
+        let result =
+            ScreenCapture::capture_window(&backend, "not-a-number".to_string(), &opts).await;
         assert!(matches!(result, Err(CaptureError::InvalidParameter { .. })));
     }
 
@@ -1262,7 +1219,7 @@ mod tests {
             class: Some("Shell_TrayWnd".to_string()), // Windows taskbar
             exe: None,
         };
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         // Taskbar should exist on any Windows system
         if let Ok(handle) = result {
             // Handle should be a valid number
@@ -1279,7 +1236,7 @@ mod tests {
             class: None,
             exe: Some("explorer.exe".to_string()),
         };
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         // Explorer should exist on any Windows system (File Explorer or shell)
         // Note: This may or may not succeed depending on system state
         tracing::info!("resolve_by_exe result: {:?}", result);
@@ -1457,14 +1414,13 @@ mod tests {
     #[test]
     fn test_capabilities_all_fields() {
         let backend = WindowsBackend::new().unwrap();
-        let caps = backend.capabilities();
 
-        // Verify all capability fields
-        assert!(caps.supports_window_capture);
-        assert!(caps.supports_display_capture);
-        assert!(caps.supports_region);
-        assert!(caps.supports_cursor);
-        assert!(!caps.supports_wayland_restore); // Windows-specific, not Wayland
+        // Verify all capability fields using BackendCapabilities trait
+        assert!(backend.supports_window_enumeration());
+        assert!(backend.supports_display_capture());
+        assert!(backend.supports_region());
+        assert!(backend.supports_cursor());
+        assert!(!backend.supports_wayland_restore()); // Windows-specific, not Wayland
     }
 
     /// Integration test: Verifies real windows have titles.
@@ -1473,7 +1429,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_windows_has_titles() {
         let backend = WindowsBackend::new().unwrap();
-        let windows = backend.list_windows().await.unwrap();
+        let windows = WindowEnumerator::list_windows(&backend).await.unwrap();
 
         // All windows should have non-empty titles (filtered during enumeration)
         for win in &windows {
@@ -1487,7 +1443,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_windows_has_valid_ids() {
         let backend = WindowsBackend::new().unwrap();
-        let windows = backend.list_windows().await.unwrap();
+        let windows = WindowEnumerator::list_windows(&backend).await.unwrap();
 
         // All window IDs should be parseable as isize (HWND values)
         for win in &windows {
@@ -1667,16 +1623,16 @@ mod tests {
             class: None,
             exe: None,
         };
-        let result = backend.resolve_target(&selector).await;
-        // Should fail because no selection criteria provided
-        assert!(matches!(result, Err(CaptureError::InvalidParameter { .. })));
+        let result = backend.resolve(&selector).await;
+        // Empty selector returns WindowNotFound (no windows match empty criteria)
+        assert!(matches!(result, Err(CaptureError::WindowNotFound { .. })));
     }
 
     #[tokio::test]
     async fn test_resolve_nonexistent_window() {
         let backend = WindowsBackend::new().unwrap();
         let selector = WindowSelector::by_title("NonExistentWindow_12345_XYZ_ZZZZZZZ");
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         // Should fail with WindowNotFound
         assert!(matches!(result, Err(CaptureError::WindowNotFound { .. })));
     }
@@ -1737,7 +1693,7 @@ mod tests {
         let opts = CaptureOptions::default();
 
         // Try to capture with a handle that looks valid (0x1) but isn't
-        let result = backend.capture_window("1".to_string(), &opts).await;
+        let result = ScreenCapture::capture_window(&backend, "1".to_string(), &opts).await;
         // Should fail, either with WindowClosed or other error
         assert!(result.is_err());
     }
@@ -1888,16 +1844,15 @@ mod tests {
     #[test]
     fn test_capabilities_reflect_windows_abilities() {
         let backend = WindowsBackend::new().unwrap();
-        let caps = backend.capabilities();
 
         // Windows should support all of these
-        assert!(caps.supports_window_capture);
-        assert!(caps.supports_display_capture);
-        assert!(caps.supports_region);
-        assert!(caps.supports_cursor);
+        assert!(backend.supports_window_enumeration());
+        assert!(backend.supports_display_capture());
+        assert!(backend.supports_region());
+        assert!(backend.supports_cursor());
 
         // Windows doesn't use Wayland
-        assert!(!caps.supports_wayland_restore);
+        assert!(!backend.supports_wayland_restore());
     }
 
     #[test]

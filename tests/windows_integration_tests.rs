@@ -658,14 +658,14 @@ async fn test_capabilities_report() {
     let caps = backend.capabilities();
 
     println!("Windows Backend Capabilities:");
-    println!("  Window Capture: {}", caps.supports_window_capture);
+    println!("  Window Capture: {}", caps.supports_window_enumeration);
     println!("  Display Capture: {}", caps.supports_display_capture);
     println!("  Region Crop: {}", caps.supports_region);
     println!("  Cursor: {}", caps.supports_cursor);
     println!("  Wayland Restore: {}", caps.supports_wayland_restore);
 
     // Windows should support all except Wayland
-    assert!(caps.supports_window_capture, "Should support window capture");
+    assert!(caps.supports_window_enumeration, "Should support window capture");
     assert!(caps.supports_display_capture, "Should support display capture");
     assert!(caps.supports_region, "Should support region cropping");
     assert!(caps.supports_cursor, "Should support cursor capture");

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use screenshot_core::capture::create_default_backend;
-use screenshot_core::model::{CaptureOptions, CaptureSource, ImageFormat, WindowSelector};
+use screenshot_core::model::{CaptureOptions, ImageFormat, WindowSelector};
 use screenshot_core::util::encode::encode_image;
 
 #[derive(Parser)]
@@ -129,7 +129,16 @@ async fn main() -> Result<()> {
 
 async fn list_windows() -> Result<()> {
     let backend = create_default_backend()?;
-    let windows = backend.list_windows().await?;
+
+    // Use the WindowEnumerator capability directly
+    let enumerator = backend.enumerator.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Window enumeration is not supported on this backend. \
+             On Wayland, use prime_wayland_consent to select windows."
+        )
+    })?;
+
+    let windows = enumerator.list_windows().await?;
 
     println!("Found {} windows:\n", windows.len());
     for window in windows {
@@ -192,12 +201,16 @@ async fn capture_window(
         exe,
     };
 
-    // Resolve window
+    // Resolve window using WindowResolver capability
     println!("Resolving window...");
-    let handle = backend.resolve_target(&selector).await?;
+    let resolver = backend
+        .resolver
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Window resolution is not available on this backend"))?;
+    let handle = resolver.resolve(&selector).await?;
     println!("Found window: {}", handle);
 
-    // Capture
+    // Capture using ScreenCapture capability
     println!("Capturing window...");
     let opts = CaptureOptions::builder()
         .format(format)
@@ -205,8 +218,7 @@ async fn capture_window(
         .scale(scale)
         .build();
 
-    let source = CaptureSource::Window(handle);
-    let image_buffer = backend.capture(source, &opts).await?;
+    let image_buffer = backend.capture.capture_window(handle, &opts).await?;
 
     // Encode and save
     println!("Encoding image...");
@@ -247,7 +259,7 @@ async fn capture_display(
     // Create backend
     let backend = create_default_backend()?;
 
-    // Capture
+    // Capture using ScreenCapture capability
     let display_name = display_id
         .map(|id| format!("display {}", id))
         .unwrap_or_else(|| "primary display".to_string());
@@ -259,8 +271,7 @@ async fn capture_display(
         .scale(scale)
         .build();
 
-    let source = CaptureSource::Display(display_id);
-    let image_buffer = backend.capture(source, &opts).await?;
+    let image_buffer = backend.capture.capture_display(display_id, &opts).await?;
 
     // Encode and save
     println!("Encoding image...");

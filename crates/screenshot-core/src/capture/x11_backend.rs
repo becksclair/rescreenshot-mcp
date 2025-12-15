@@ -67,7 +67,8 @@ use x11rb::{
 };
 
 use super::{
-    CaptureFacade, ImageBuffer, WindowMatcher,
+    BackendCapabilities, CaptureFacade, ImageBuffer, ScreenCapture, WindowEnumerator,
+    WindowMatcher, WindowResolver,
     constants::{LIST_WINDOWS_TIMEOUT_MS, X11_CAPTURE_TIMEOUT_MS},
 };
 use crate::{
@@ -1278,16 +1279,111 @@ impl CaptureFacade for X11Backend {
     /// - Restore tokens: No (X11 doesn't need permission persistence)
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            supports_cursor: false,          // xcap doesn't support cursor capture
-            supports_region: true,           // Post-capture cropping supported
-            supports_wayland_restore: false, // X11 doesn't use restore tokens
-            supports_window_capture: true,   // Direct enumeration allowed
-            supports_display_capture: true,  // xcap supports display capture
+            supports_cursor: false,            // xcap doesn't support cursor capture
+            supports_region: true,             // Post-capture cropping supported
+            supports_wayland_restore: false,   // X11 doesn't use restore tokens
+            supports_window_enumeration: true, // Direct enumeration allowed
+            supports_display_capture: true,    // xcap supports display capture
         }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+// ============================================================================
+// Capability Trait Implementations
+// ============================================================================
+
+#[async_trait]
+impl WindowEnumerator for X11Backend {
+    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
+        // Delegate to CaptureFacade implementation
+        CaptureFacade::list_windows(self).await
+    }
+}
+
+#[async_trait]
+impl WindowResolver for X11Backend {
+    #[cfg(target_os = "linux")]
+    async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+        // Delegate to CaptureFacade implementation
+        CaptureFacade::resolve_target(self, selector).await
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn resolve(&self, _selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+        Err(CaptureError::BackendNotAvailable {
+            backend: BackendType::X11,
+        })
+    }
+}
+
+#[async_trait]
+impl ScreenCapture for X11Backend {
+    #[cfg(target_os = "linux")]
+    async fn capture_window(
+        &self,
+        handle: WindowHandle,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        // Delegate to CaptureFacade implementation
+        CaptureFacade::capture_window(self, handle, opts).await
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn capture_window(
+        &self,
+        _handle: WindowHandle,
+        _opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        Err(CaptureError::BackendNotAvailable {
+            backend: BackendType::X11,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn capture_display(
+        &self,
+        display_id: Option<u32>,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        // Delegate to CaptureFacade implementation
+        CaptureFacade::capture_display(self, display_id, opts).await
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn capture_display(
+        &self,
+        _display_id: Option<u32>,
+        _opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        Err(CaptureError::BackendNotAvailable {
+            backend: BackendType::X11,
+        })
+    }
+}
+
+impl BackendCapabilities for X11Backend {
+    fn supports_cursor(&self) -> bool {
+        false // xcap doesn't support cursor capture
+    }
+
+    fn supports_region(&self) -> bool {
+        true // Post-capture cropping supported
+    }
+
+    fn supports_wayland_restore(&self) -> bool {
+        false // X11 doesn't use restore tokens
+    }
+
+    fn supports_window_enumeration(&self) -> bool {
+        true // Direct enumeration allowed
+    }
+
+    fn supports_display_capture(&self) -> bool {
+        true // xcap supports display capture
     }
 }
 
@@ -1323,7 +1419,7 @@ mod tests {
             assert!(!caps.supports_cursor); // xcap limitation
             assert!(caps.supports_region);
             assert!(!caps.supports_wayland_restore); // X11-specific
-            assert!(caps.supports_window_capture);
+            assert!(caps.supports_window_enumeration);
             assert!(caps.supports_display_capture);
         }
     }
@@ -1978,7 +2074,7 @@ mod tests {
             assert_eq!(caps1.supports_cursor, caps2.supports_cursor);
             assert_eq!(caps1.supports_region, caps2.supports_region);
             assert_eq!(caps1.supports_wayland_restore, caps2.supports_wayland_restore);
-            assert_eq!(caps1.supports_window_capture, caps2.supports_window_capture);
+            assert_eq!(caps1.supports_window_enumeration, caps2.supports_window_enumeration);
             assert_eq!(caps1.supports_display_capture, caps2.supports_display_capture);
         }
     }

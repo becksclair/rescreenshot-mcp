@@ -1,9 +1,10 @@
 //! Mock capture backend for testing
 //!
-//! This module provides a `MockBackend` implementation of the [`CaptureFacade`]
-//! trait for testing and development purposes. The mock backend generates
-//! synthetic test images and simulates window enumeration without requiring
-//! access to a real windowing system.
+//! This module provides a `MockBackend` implementing the capability traits
+//! (`WindowEnumerator`, `WindowResolver`, `ScreenCapture`) for testing and
+//! development purposes. The mock backend generates synthetic test images
+//! and simulates window enumeration without requiring access to a real
+//! windowing system.
 //!
 //! # Features
 //!
@@ -24,7 +25,7 @@
 //!
 //! ```
 //! use screenshot_core::{
-//!     capture::{CaptureFacade, mock::MockBackend},
+//!     capture::{mock::MockBackend, ScreenCapture, WindowEnumerator, WindowResolver},
 //!     model::{CaptureOptions, WindowSelector},
 //! };
 //!
@@ -39,7 +40,7 @@
 //!
 //!     // Capture a window
 //!     let selector = WindowSelector::by_title("Firefox");
-//!     let handle = backend.resolve_target(&selector).await.unwrap();
+//!     let handle = backend.resolve(&selector).await.unwrap();
 //!     let opts = CaptureOptions::default();
 //!     let image = backend.capture_window(handle, &opts).await.unwrap();
 //!     assert_eq!(image.dimensions(), (1920, 1080));
@@ -52,7 +53,7 @@
 //! use std::time::Duration;
 //!
 //! use screenshot_core::{
-//!     capture::{CaptureFacade, mock::MockBackend},
+//!     capture::{mock::MockBackend, WindowEnumerator},
 //!     model::CaptureOptions,
 //! };
 //!
@@ -70,7 +71,7 @@
 //!
 //! ```
 //! use screenshot_core::{
-//!     capture::{CaptureFacade, mock::MockBackend},
+//!     capture::{mock::MockBackend, WindowEnumerator},
 //!     error::CaptureError,
 //!     model::{BackendType, WindowSelector},
 //! };
@@ -95,17 +96,20 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::time::sleep;
 
-use super::{CaptureFacade, ImageBuffer, WindowMatcher};
+use super::{
+    BackendCapabilities, ImageBuffer, ScreenCapture, WindowEnumerator, WindowMatcher,
+    WindowResolver,
+};
 use crate::{
     error::{CaptureError, CaptureResult},
-    model::{BackendType, Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
+    model::{BackendType, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
 };
 
 /// Mock capture backend for testing and development
 ///
-/// Implements [`CaptureFacade`] without requiring access to a real windowing
-/// system. Generates synthetic test images and provides predefined mock window
-/// data.
+/// Implements the capability traits (`WindowEnumerator`, `WindowResolver`,
+/// `ScreenCapture`) without requiring access to a real windowing system.
+/// Generates synthetic test images and provides predefined mock window data.
 ///
 /// # Thread Safety
 ///
@@ -297,6 +301,10 @@ impl MockBackend {
                     minimum_build: *minimum_build,
                 },
                 CaptureError::WindowClosed => CaptureError::WindowClosed,
+                CaptureError::NotSupported { feature, backend } => CaptureError::NotSupported {
+                    feature: feature.clone(),
+                    backend: *backend,
+                },
             });
         }
         Ok(())
@@ -353,15 +361,22 @@ impl Default for MockBackend {
     }
 }
 
+// ============================================================================
+// Capability Trait Implementations
+// ============================================================================
+
 #[async_trait]
-impl CaptureFacade for MockBackend {
+impl WindowEnumerator for MockBackend {
     async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
         self.apply_delay().await;
         self.check_error_injection()?;
         Ok(self.windows.clone())
     }
+}
 
-    async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+#[async_trait]
+impl WindowResolver for MockBackend {
+    async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
         self.apply_delay().await;
         self.check_error_injection()?;
 
@@ -371,7 +386,10 @@ impl CaptureFacade for MockBackend {
                 selector: selector.clone(),
             })
     }
+}
 
+#[async_trait]
+impl ScreenCapture for MockBackend {
     async fn capture_window(
         &self,
         handle: WindowHandle,
@@ -402,14 +420,27 @@ impl CaptureFacade for MockBackend {
         // Apply transformations
         self.apply_transformations(image, opts)
     }
+}
 
-    fn capabilities(&self) -> Capabilities {
-        // Mock backend supports all features
-        Capabilities::full()
+impl BackendCapabilities for MockBackend {
+    fn supports_cursor(&self) -> bool {
+        true
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn supports_region(&self) -> bool {
+        true
+    }
+
+    fn supports_wayland_restore(&self) -> bool {
+        true // Mock supports all features
+    }
+
+    fn supports_window_enumeration(&self) -> bool {
+        true
+    }
+
+    fn supports_display_capture(&self) -> bool {
+        true
     }
 }
 
@@ -475,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_windows() {
         let backend = MockBackend::new();
-        let windows = backend.list_windows().await.unwrap();
+        let windows = WindowEnumerator::list_windows(&backend).await.unwrap();
         assert_eq!(windows.len(), 3);
     }
 
@@ -486,7 +517,7 @@ mod tests {
         };
         let backend = MockBackend::new().with_error(error);
 
-        let result = backend.list_windows().await;
+        let result = WindowEnumerator::list_windows(&backend).await;
         assert!(result.is_err());
     }
 
@@ -494,7 +525,7 @@ mod tests {
     async fn test_resolve_target_by_title() {
         let backend = MockBackend::new();
         let selector = WindowSelector::by_title("Firefox");
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = backend.resolve(&selector).await.unwrap();
         assert_eq!(handle, "mock-0x1");
     }
 
@@ -502,7 +533,7 @@ mod tests {
     async fn test_resolve_target_by_title_case_insensitive() {
         let backend = MockBackend::new();
         let selector = WindowSelector::by_title("firefox");
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = backend.resolve(&selector).await.unwrap();
         assert_eq!(handle, "mock-0x1");
     }
 
@@ -510,7 +541,7 @@ mod tests {
     async fn test_resolve_target_by_title_partial_match() {
         let backend = MockBackend::new();
         let selector = WindowSelector::by_title("Visual Studio");
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = backend.resolve(&selector).await.unwrap();
         assert_eq!(handle, "mock-0x2");
     }
 
@@ -518,7 +549,7 @@ mod tests {
     async fn test_resolve_target_by_class() {
         let backend = MockBackend::new();
         let selector = WindowSelector::by_class("Code");
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = backend.resolve(&selector).await.unwrap();
         assert_eq!(handle, "mock-0x2");
     }
 
@@ -526,7 +557,7 @@ mod tests {
     async fn test_resolve_target_by_exe() {
         let backend = MockBackend::new();
         let selector = WindowSelector::by_exe("alacritty");
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = backend.resolve(&selector).await.unwrap();
         assert_eq!(handle, "mock-0x3");
     }
 
@@ -534,7 +565,7 @@ mod tests {
     async fn test_resolve_target_not_found() {
         let backend = MockBackend::new();
         let selector = WindowSelector::by_title("Nonexistent");
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), CaptureError::WindowNotFound { .. }));
     }
@@ -547,7 +578,7 @@ mod tests {
             class: Some("Code".to_string()),
             exe: None,
         };
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = backend.resolve(&selector).await.unwrap();
         assert_eq!(handle, "mock-0x2");
     }
 
@@ -557,7 +588,7 @@ mod tests {
         let backend = MockBackend::new().with_error(error);
 
         let selector = WindowSelector::by_title("Firefox");
-        let result = backend.resolve_target(&selector).await;
+        let result = backend.resolve(&selector).await;
         assert!(result.is_err());
     }
 
@@ -567,7 +598,9 @@ mod tests {
         let handle = "mock-0x1".to_string();
         let opts = CaptureOptions::default();
 
-        let image = backend.capture_window(handle, &opts).await.unwrap();
+        let image = ScreenCapture::capture_window(&backend, handle, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (1920, 1080));
     }
 
@@ -577,7 +610,9 @@ mod tests {
         let handle = "mock-0x1".to_string();
         let opts = CaptureOptions::builder().scale(0.5).build();
 
-        let image = backend.capture_window(handle, &opts).await.unwrap();
+        let image = ScreenCapture::capture_window(&backend, handle, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (960, 540));
     }
 
@@ -588,7 +623,9 @@ mod tests {
         let region = Region::new(100, 100, 800, 600);
         let opts = CaptureOptions::builder().region(region).build();
 
-        let image = backend.capture_window(handle, &opts).await.unwrap();
+        let image = ScreenCapture::capture_window(&backend, handle, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (800, 600));
     }
 
@@ -599,7 +636,9 @@ mod tests {
         let region = Region::new(50, 50, 400, 300);
         let opts = CaptureOptions::builder().scale(0.5).region(region).build();
 
-        let image = backend.capture_window(handle, &opts).await.unwrap();
+        let image = ScreenCapture::capture_window(&backend, handle, &opts)
+            .await
+            .unwrap();
         // First scales to 960x540, then crops
         assert_eq!(image.dimensions(), (400, 300));
     }
@@ -610,7 +649,7 @@ mod tests {
         let handle = "invalid-handle".to_string();
         let opts = CaptureOptions::default();
 
-        let result = backend.capture_window(handle, &opts).await;
+        let result = ScreenCapture::capture_window(&backend, handle, &opts).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), CaptureError::WindowNotFound { .. }));
     }
@@ -625,7 +664,7 @@ mod tests {
 
         let handle = "mock-0x1".to_string();
         let opts = CaptureOptions::default();
-        let result = backend.capture_window(handle, &opts).await;
+        let result = ScreenCapture::capture_window(&backend, handle, &opts).await;
         assert!(result.is_err());
     }
 
@@ -634,7 +673,9 @@ mod tests {
         let backend = MockBackend::new();
         let opts = CaptureOptions::default();
 
-        let image = backend.capture_display(None, &opts).await.unwrap();
+        let image = ScreenCapture::capture_display(&backend, None, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (2560, 1440));
     }
 
@@ -643,7 +684,9 @@ mod tests {
         let backend = MockBackend::new();
         let opts = CaptureOptions::default();
 
-        let image = backend.capture_display(Some(1), &opts).await.unwrap();
+        let image = ScreenCapture::capture_display(&backend, Some(1), &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (2560, 1440));
     }
 
@@ -652,7 +695,9 @@ mod tests {
         let backend = MockBackend::new();
         let opts = CaptureOptions::builder().scale(0.5).build();
 
-        let image = backend.capture_display(None, &opts).await.unwrap();
+        let image = ScreenCapture::capture_display(&backend, None, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (1280, 720));
     }
 
@@ -662,7 +707,9 @@ mod tests {
         let region = Region::new(200, 200, 1000, 800);
         let opts = CaptureOptions::builder().region(region).build();
 
-        let image = backend.capture_display(None, &opts).await.unwrap();
+        let image = ScreenCapture::capture_display(&backend, None, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (1000, 800));
     }
 
@@ -674,20 +721,19 @@ mod tests {
         let backend = MockBackend::new().with_error(error);
 
         let opts = CaptureOptions::default();
-        let result = backend.capture_display(None, &opts).await;
+        let result = ScreenCapture::capture_display(&backend, None, &opts).await;
         assert!(result.is_err());
     }
 
     #[test]
     fn test_capabilities() {
         let backend = MockBackend::new();
-        let caps = backend.capabilities();
 
-        assert!(caps.supports_cursor);
-        assert!(caps.supports_region);
-        assert!(caps.supports_wayland_restore);
-        assert!(caps.supports_window_capture);
-        assert!(caps.supports_display_capture);
+        assert!(backend.supports_cursor());
+        assert!(backend.supports_region());
+        assert!(backend.supports_wayland_restore());
+        assert!(backend.supports_window_enumeration());
+        assert!(backend.supports_display_capture());
     }
 
     #[tokio::test]
@@ -696,7 +742,7 @@ mod tests {
         let backend = MockBackend::new().with_delay(delay);
 
         let start = Instant::now();
-        let _ = backend.list_windows().await.unwrap();
+        let _ = WindowEnumerator::list_windows(&backend).await.unwrap();
         let elapsed = start.elapsed();
 
         assert!(
@@ -717,12 +763,12 @@ mod tests {
         let backend = MockBackend::new();
 
         // Step 1: List windows
-        let windows = backend.list_windows().await.unwrap();
+        let windows = WindowEnumerator::list_windows(&backend).await.unwrap();
         assert_eq!(windows.len(), 3);
 
         // Step 2: Resolve target
         let selector = WindowSelector::by_title("Firefox");
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = WindowResolver::resolve(&backend, &selector).await.unwrap();
         assert_eq!(handle, "mock-0x1");
 
         // Step 3: Capture window
@@ -730,7 +776,9 @@ mod tests {
             .format(ImageFormat::Png)
             .scale(0.5)
             .build();
-        let image = backend.capture_window(handle, &opts).await.unwrap();
+        let image = ScreenCapture::capture_window(&backend, handle, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (960, 540));
     }
 
@@ -743,15 +791,23 @@ mod tests {
         let backend = MockBackend::new().with_error(error);
 
         // All operations should fail with the injected error
-        assert!(backend.list_windows().await.is_err());
+        assert!(WindowEnumerator::list_windows(&backend).await.is_err());
 
         let selector = WindowSelector::by_title("Firefox");
-        assert!(backend.resolve_target(&selector).await.is_err());
+        assert!(WindowResolver::resolve(&backend, &selector).await.is_err());
 
         let handle = "mock-0x1".to_string();
         let opts = CaptureOptions::default();
-        assert!(backend.capture_window(handle, &opts).await.is_err());
-        assert!(backend.capture_display(None, &opts).await.is_err());
+        assert!(
+            ScreenCapture::capture_window(&backend, handle.clone(), &opts)
+                .await
+                .is_err()
+        );
+        assert!(
+            ScreenCapture::capture_display(&backend, None, &opts)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -761,19 +817,22 @@ mod tests {
         let start = Instant::now();
 
         // Full capture flow
-        let windows = backend.list_windows().await.unwrap();
+        let windows = WindowEnumerator::list_windows(&backend).await.unwrap();
         assert_eq!(windows.len(), 3);
 
         let selector = WindowSelector::by_title("Firefox");
-        let handle = backend.resolve_target(&selector).await.unwrap();
+        let handle = WindowResolver::resolve(&backend, &selector).await.unwrap();
 
         let opts = CaptureOptions::default();
-        let image = backend.capture_window(handle, &opts).await.unwrap();
+        let image = ScreenCapture::capture_window(&backend, handle, &opts)
+            .await
+            .unwrap();
         assert_eq!(image.dimensions(), (1920, 1080));
 
         let elapsed = start.elapsed();
 
-        // Should complete in less than 2 seconds (should be much faster without delay)
-        assert!(elapsed < Duration::from_secs(2), "Capture flow took too long: {:?}", elapsed);
+        // Should complete in less than 5 seconds (giving headroom for loaded systems)
+        // Mock operations should be fast but test execution overhead can vary
+        assert!(elapsed < Duration::from_secs(5), "Capture flow took too long: {:?}", elapsed);
     }
 }

@@ -70,21 +70,23 @@ Captures a screenshot of a specific window.
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `selector.title` | string | - | Window title substring |
-| `selector.class` | string | - | Window class |
-| `selector.exe` | string | - | Executable name (Windows) |
-| `selector.id` | string | - | Exact window ID |
-| `format` | string | `"png"` | `"png"`, `"webp"`, or `"jpeg"` |
-| `quality` | number | 80 | 0-100 (jpeg/webp only) |
+| `titleSubstringOrRegex` | string | - | Window title substring or regex |
+| `class` | string | - | Window class |
+| `exe` | string | - | Executable name (Windows) |
+| `format` | string | `"webp"` | `"webp"`, `"png"`, or `"jpeg"` |
+| `quality` | number | 80 | 0-100 (webp/jpeg only) |
 | `scale` | number | 1.0 | 0.1-2.0 resize factor |
-| `region.x/y/width/height` | number | - | Crop region in pixels |
+| `includeCursor` | boolean | false | Include cursor in capture |
+| `region` | object | - | Crop region `{x, y, width, height}` |
+
+> **Note (v0.6.0):** Default format changed from PNG to WebP for better compression and agent-friendly payloads.
 
 **Request:**
 ```json
 {
   "name": "capture_window",
   "arguments": {
-    "selector": { "title": "Firefox" },
+    "titleSubstringOrRegex": "Firefox",
     "format": "jpeg",
     "quality": 80,
     "scale": 0.5
@@ -92,12 +94,13 @@ Captures a screenshot of a specific window.
 }
 ```
 
-**Response:**
+**Response (3-part structure):**
 ```json
 {
   "content": [
     { "type": "image", "mimeType": "image/jpeg", "data": "..." },
-    { "type": "text", "text": "Saved to: /tmp/screenshot_123.jpg" }
+    { "type": "text", "text": "[Screenshot](file:///tmp/screenshot-mcp/screenshot-123.jpg)" },
+    { "type": "text", "text": "## Capture Metadata\n```json\n{\"dimensions\": [960, 540], \"format\": \"jpeg\", \"quality\": 80, \"scale\": 0.5}\n```" }
   ]
 }
 ```
@@ -216,8 +219,9 @@ sequenceDiagram
 1. **Always call `health_check` first** — know your platform/backend
 2. **List before capture** — don't guess window titles
 3. **Use cropping** — reduce payload size, exclude sensitive areas
-4. **Prefer JPEG** — faster encoding, smaller size for most UI
+4. **Use WebP (default)** — best balance of quality and compression for agent interactions
 5. **Handle token expiry** — Wayland tokens invalidate on compositor restart
+6. **Scale down large captures** — `scale: 0.5` reduces payload by ~75%
 
 ---
 

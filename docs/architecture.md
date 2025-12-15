@@ -12,6 +12,11 @@ flowchart TB
         Error[error.rs]
     end
 
+    subgraph Core["screenshot-core"]
+        Traits[Capability Traits]
+        Composite[CompositeBackend]
+    end
+
     subgraph Backends["capture/"]
         Wayland[wayland_backend.rs]
         X11[x11_backend.rs]
@@ -19,11 +24,38 @@ flowchart TB
     end
 
     Handler --> Model
-    Handler --> Backends
+    Handler --> Composite
+    Composite --> Traits
+    Traits --> Backends
 
     Wayland --> Portal[XDG Portal + PipeWire]
     X11 --> XServer[X11 Server + xcap]
     Windows --> WGC[Windows Graphics Capture]
+```
+
+### Capability Traits (v0.6.0+)
+
+Backends implement fine-grained capability traits instead of a monolithic facade:
+
+| Trait | Purpose | Backends |
+|-------|---------|----------|
+| `WindowEnumerator` | List capturable windows | X11, Windows, Mock |
+| `WindowResolver` | Resolve selectors to handles | All |
+| `ScreenCapture` | Capture screenshots | All |
+| `WaylandRestoreCapable` | Wayland token workflow | Wayland |
+| `BackendCapabilities` | Query feature support | All |
+
+```rust
+// Type-safe capability access via CompositeBackend
+let backend = create_default_backend()?;
+
+// Check if window enumeration is available
+if let Some(enumerator) = backend.enumerator.as_ref() {
+    let windows = enumerator.list_windows().await?;
+}
+
+// Capture always available
+let image = backend.capture.capture_window(handle, &opts).await?;
 ```
 
 ---
@@ -273,10 +305,11 @@ impl CaptureError {
 
 ### Optimization Tips
 
-1. **Use JPEG** with quality 80 — fastest encoding, smallest payload
+1. **Use WebP (default)** — best quality/size ratio for agent interactions
 2. **Scale down** — `scale: 0.5` reduces pixels by 75%
 3. **Crop to ROI** — only capture what you need
 4. **Cache window IDs** — avoid repeated enumeration
+5. **Use JPEG for speed** — faster encoding when latency is critical
 
 ---
 

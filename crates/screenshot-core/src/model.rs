@@ -544,8 +544,8 @@ pub struct Capabilities {
     pub supports_region: bool,
     /// Backend supports Wayland restore tokens (for permission-free recapture)
     pub supports_wayland_restore: bool,
-    /// Backend supports window-specific capture
-    pub supports_window_capture: bool,
+    /// Backend supports window enumeration (listing available windows)
+    pub supports_window_enumeration: bool,
     /// Backend supports full display/screen capture
     pub supports_display_capture: bool,
 }
@@ -557,7 +557,7 @@ impl Capabilities {
             supports_cursor: true,
             supports_region: true,
             supports_wayland_restore: true,
-            supports_window_capture: true,
+            supports_window_enumeration: true,
             supports_display_capture: true,
         }
     }
@@ -568,7 +568,7 @@ impl Capabilities {
             supports_cursor: false,
             supports_region: false,
             supports_wayland_restore: false,
-            supports_window_capture: false,
+            supports_window_enumeration: false,
             supports_display_capture: false,
         }
     }
@@ -589,7 +589,7 @@ impl Default for Capabilities {
 /// ```
 /// use screenshot_core::model::{CaptureOptions, ImageFormat};
 ///
-/// // Default options (PNG, quality=80, scale=1.0)
+/// // Default options (WebP, quality=80, scale=1.0, max_dimension=1920)
 /// let opts = CaptureOptions::default();
 ///
 /// // Custom WebP with high quality
@@ -600,6 +600,7 @@ impl Default for Capabilities {
 ///     include_cursor: false,
 ///     region:         None,
 ///     wayland_source: None,
+///     max_dimension:  Some(1920),
 /// };
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -1273,7 +1274,7 @@ mod tests {
         assert!(caps.supports_cursor);
         assert!(caps.supports_region);
         assert!(caps.supports_wayland_restore);
-        assert!(caps.supports_window_capture);
+        assert!(caps.supports_window_enumeration);
         assert!(caps.supports_display_capture);
     }
 
@@ -1283,7 +1284,7 @@ mod tests {
         assert!(!caps.supports_cursor);
         assert!(!caps.supports_region);
         assert!(!caps.supports_wayland_restore);
-        assert!(!caps.supports_window_capture);
+        assert!(!caps.supports_window_enumeration);
         assert!(!caps.supports_display_capture);
     }
 
@@ -1300,7 +1301,7 @@ mod tests {
         assert_eq!(json["supports_cursor"], true);
         assert_eq!(json["supports_region"], true);
         assert_eq!(json["supports_wayland_restore"], true);
-        assert_eq!(json["supports_window_capture"], true);
+        assert_eq!(json["supports_window_enumeration"], true);
         assert_eq!(json["supports_display_capture"], true);
     }
 

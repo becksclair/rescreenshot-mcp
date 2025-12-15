@@ -15,7 +15,7 @@ use std::{
 };
 
 use screenshot_core::{
-    capture::{CaptureFacade, ImageBuffer, windows_backend::WindowsBackend},
+    capture::{ImageBuffer, ScreenCapture, WindowEnumerator, windows_backend::WindowsBackend},
     model::{CaptureOptions, WindowInfo},
 };
 

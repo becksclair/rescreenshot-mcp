@@ -4,9 +4,84 @@ All notable changes to screenshot-mcp are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: Test cleanup crash (0xe06d7363)**: Fixed C++ exception during process teardown by replacing `drop(capture)` with `capture.stop()` in WGC capture functions. The `CaptureControl::stop()` method gracefully posts WM_QUIT and joins the background thread, preventing race conditions during cleanup.
+
 ### Planned (M5)
 
 - macOS ScreenCaptureKit backend
+
+---
+
+## [0.6.0] - 2025-12-15
+
+### Breaking Changes
+
+**CaptureFacade Removed**
+
+The deprecated `CaptureFacade` trait has been removed. Use `CompositeBackend` capabilities directly:
+
+**Before (0.4.x):**
+```rust
+let backend: Arc<dyn CaptureFacade> = create_default_backend()?;
+backend.list_windows().await?;
+backend.capture_window(handle, &opts).await?;
+```
+
+**After (0.6.0):**
+```rust
+let backend: Arc<CompositeBackend> = create_default_backend()?;
+// Use capability accessors directly
+backend.enumerator.as_ref()
+    .ok_or(CaptureError::NotSupported { feature: "window_enumeration".into(), backend: BackendType::Wayland })?
+    .list_windows().await?;
+backend.capture.capture_window(handle, &opts).await?;
+```
+
+### Added
+
+**MCP Capture Options:**
+
+The `capture_window` MCP tool now supports additional optional parameters:
+
+- `format`: Output image format (`png`, `jpeg`, `webp`). Default: `webp`
+- `quality`: Compression quality (0-100). Default: `80`
+- `scale`: Image scale factor (0.1-2.0). Default: `1.0`
+- `includeCursor`: Whether to include cursor in capture. Default: `false`
+- `region`: Capture specific region (`{x, y, width, height}`)
+
+Example MCP request:
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "capture_window",
+    "arguments": {
+      "titleSubstringOrRegex": "Firefox",
+      "format": "png",
+      "quality": 95,
+      "scale": 0.5,
+      "region": {"x": 100, "y": 100, "width": 800, "height": 600}
+    }
+  }
+}
+```
+
+**New Error Variant:**
+
+- `CaptureError::NotSupported`: Returned when a capability is not available on the current backend
+
+### Changed
+
+- Default output format documented as WebP (was incorrectly documented as PNG)
+- Capability traits (`WindowEnumerator`, `WindowResolver`, `ScreenCapture`) are now the primary API
+- MCP server uses capability traits directly instead of deprecated facade
+
+### Removed
+
+- `CaptureFacade` trait and all implementations
+- `#[deprecated]` annotations related to CaptureFacade migration
 
 ---
 

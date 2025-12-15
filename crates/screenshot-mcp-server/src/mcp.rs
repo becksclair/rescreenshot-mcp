@@ -15,28 +15,104 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::mcp_content::build_capture_result;
-#[cfg(target_os = "linux")]
-use screenshot_core::capture::WaylandBackend;
 use screenshot_core::{
-    capture::{CaptureFacade, MockBackend},
+    capture::{CompositeBackend, MockBackend, composite_from_mock},
     error::CaptureError,
     model::{CaptureOptions, HealthCheckResponse, ImageFormat, SourceType, WindowSelector},
     util::{detect::detect_platform, encode::encode_image, temp_files::TempFileManager},
 };
 
+/// Output image format for screenshot capture
+///
+/// Defaults to `Webp` for optimal agent consumption (good compression, widely supported).
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureFormat {
+    /// PNG format (lossless, larger files)
+    Png,
+    /// JPEG format (lossy, quality-controlled)
+    Jpeg,
+    /// WebP format (modern, efficient compression) - default
+    #[default]
+    Webp,
+}
+
+impl CaptureFormat {
+    /// Convert to core ImageFormat
+    pub fn to_image_format(self) -> ImageFormat {
+        match self {
+            CaptureFormat::Png => ImageFormat::Png,
+            CaptureFormat::Jpeg => ImageFormat::Jpeg,
+            CaptureFormat::Webp => ImageFormat::Webp,
+        }
+    }
+}
+
+/// Region of a window to capture (crop coordinates)
+///
+/// All coordinates are in pixels relative to the window's top-left corner.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureRegion {
+    /// X offset from left edge (pixels)
+    pub x: u32,
+    /// Y offset from top edge (pixels)
+    pub y: u32,
+    /// Width of region to capture (pixels)
+    pub width: u32,
+    /// Height of region to capture (pixels)
+    pub height: u32,
+}
+
+impl CaptureRegion {
+    /// Convert to core Region type
+    pub fn to_region(self) -> screenshot_core::model::Region {
+        screenshot_core::model::Region {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+        }
+    }
+}
+
 /// Parameters for the capture_window tool
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureWindowParams {
+    // --- Window selection (at least one required) ---
     /// Window title substring or regex pattern
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_substring_or_regex: Option<String>,
     /// Window class name
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
     /// Executable name
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exe: Option<String>,
+
+    // --- Capture options (all optional with defaults) ---
+    /// Output image format (default: webp)
+    #[serde(default)]
+    pub format: CaptureFormat,
+
+    /// Image quality for JPEG/WebP (0-100, default: 80)
+    /// Ignored for PNG format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<u8>,
+
+    /// Scale factor (0.1-2.0, default: 1.0)
+    /// Values < 1.0 reduce size, > 1.0 enlarge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f32>,
+
+    /// Whether to include cursor in capture (default: false)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_cursor: Option<bool>,
+
+    /// Region to capture (crop). If omitted, captures full window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<CaptureRegion>,
 }
 
 /// Parameters for the prime_wayland_consent tool
@@ -118,6 +194,7 @@ fn convert_capture_error_to_mcp(error: CaptureError) -> McpError {
             McpError::internal_error(format!("{}", error), None)
         }
         CaptureError::WindowClosed => McpError::invalid_params(format!("{}", error), None),
+        CaptureError::NotSupported { .. } => McpError::internal_error(format!("{}", error), None),
     }
 }
 
@@ -130,14 +207,21 @@ fn convert_capture_error_to_mcp(error: CaptureError) -> McpError {
 /// - `health_check`: Platform detection and server health status
 /// - `list_windows`: Enumerate all capturable windows
 /// - `capture_window`: Capture a screenshot of a specific window
+/// - `prime_wayland_consent`: (Wayland only) Prime consent for headless capture
 #[derive(Clone)]
 pub struct ScreenshotMcpServer {
     /// Tool router for dispatching tool calls
     /// Note: This field is used by the #[tool_router] macro
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
-    /// Backend for screenshot capture (Wayland, X11, Windows, macOS, or Mock)
-    backend: Arc<dyn CaptureFacade>,
+    /// Backend for screenshot capture with typed capability access
+    ///
+    /// Using `CompositeBackend` provides type-safe access to capabilities:
+    /// - `backend.enumerator` for window enumeration (not available on Wayland)
+    /// - `backend.resolver` for window resolution
+    /// - `backend.capture` for screenshot capture
+    /// - `backend.wayland_restore` for Wayland restore token workflow
+    backend: Arc<CompositeBackend>,
     /// Temporary file manager for storing captured screenshots
     temp_files: Arc<TempFileManager>,
 }
@@ -149,8 +233,7 @@ impl ScreenshotMcpServer {
     ///
     /// # Arguments
     ///
-    /// * `backend` - The capture backend to use (Wayland, X11, Windows, macOS,
-    ///   or Mock)
+    /// * `backend` - The composite backend providing type-safe capability access
     /// * `temp_files` - The temporary file manager for storing screenshots
     ///
     /// # Examples
@@ -159,15 +242,17 @@ impl ScreenshotMcpServer {
     /// use std::sync::Arc;
     ///
     /// use screenshot_core::{
-    ///     capture::MockBackend, util::temp_files::TempFileManager,
+    ///     capture::{composite_from_mock, MockBackend},
+    ///     util::temp_files::TempFileManager,
     /// };
     /// use screenshot_mcp_server::mcp::ScreenshotMcpServer;
     ///
-    /// let backend = Arc::new(MockBackend::new());
+    /// let mock = Arc::new(MockBackend::new());
+    /// let backend = Arc::new(composite_from_mock(mock));
     /// let temp_files = Arc::new(TempFileManager::new());
     /// let server = ScreenshotMcpServer::new(backend, temp_files);
     /// ```
-    pub fn new(backend: Arc<dyn CaptureFacade>, temp_files: Arc<TempFileManager>) -> Self {
+    pub fn new(backend: Arc<CompositeBackend>, temp_files: Arc<TempFileManager>) -> Self {
         Self {
             tool_router: Self::tool_router(),
             backend,
@@ -178,8 +263,8 @@ impl ScreenshotMcpServer {
     /// Creates a new ScreenshotMcpServer with MockBackend for testing
     ///
     /// This is a convenience constructor that initializes the server with a
-    /// MockBackend and a fresh TempFileManager. Useful for testing and
-    /// development.
+    /// MockBackend wrapped in a CompositeBackend and a fresh TempFileManager.
+    /// Useful for testing and development.
     ///
     /// # Examples
     ///
@@ -189,7 +274,8 @@ impl ScreenshotMcpServer {
     /// let server = ScreenshotMcpServer::new_with_mock();
     /// ```
     pub fn new_with_mock() -> Self {
-        let backend = Arc::new(MockBackend::new());
+        let mock = Arc::new(MockBackend::new());
+        let backend = Arc::new(composite_from_mock(mock));
         let temp_files = Arc::new(TempFileManager::new());
         Self::new(backend, temp_files)
     }
@@ -293,9 +379,17 @@ impl ScreenshotMcpServer {
     /// ```
     #[tool(description = "List all capturable windows on the system")]
     pub async fn list_windows(&self) -> Result<CallToolResult, McpError> {
+        // Get window enumerator capability (not available on Wayland)
+        let enumerator = self.backend.enumerator.as_ref().ok_or_else(|| {
+            McpError::internal_error(
+                "Window enumeration is not available on this backend. \
+                 On Wayland, use prime_wayland_consent to select sources.",
+                None,
+            )
+        })?;
+
         // Call backend to enumerate windows
-        let windows = self
-            .backend
+        let windows = enumerator
             .list_windows()
             .await
             .map_err(convert_capture_error_to_mcp)?;
@@ -393,80 +487,63 @@ impl ScreenshotMcpServer {
         &self,
         params: PrimeWaylandConsentParams,
     ) -> Result<CallToolResult, McpError> {
-        // Implementation is only available on Linux
-        #[cfg(target_os = "linux")]
-        {
-            // Step 1: Downcast to WaylandBackend
-            let wayland_backend = self
-                .backend
-                .as_any()
-                .downcast_ref::<WaylandBackend>()
-                .ok_or_else(|| {
-                    McpError::internal_error(
-                        "prime_wayland_consent requires Wayland backend. This tool is only \
-                         available on Linux with Wayland compositor. Current backend does not \
-                         support this operation.",
-                        None,
-                    )
-                })?;
-
-            // Step 2: Parse source_type string to enum
-            let source_type = parse_source_type(&params.source_type)
-                .map_err(|e| McpError::invalid_params(e, None))?;
-
-            // Step 3: Call backend prime_consent
-            let result = wayland_backend
-                .prime_consent(source_type, &params.source_id, params.include_cursor)
-                .await
-                .map_err(convert_capture_error_to_mcp)?;
-
-            // Step 4: Build structured JSON response
-            let response_json = serde_json::json!({
-                "status": "success",
-                "source_id": result.primary_source_id,
-                "all_source_ids": result.all_source_ids,
-                "num_streams": result.num_streams,
-                "source_type": params.source_type,
-                "details": format!(
-                    "Permission granted for {} {}. Restore token(s) stored securely.",
-                    result.num_streams,
-                    if result.num_streams == 1 { "source" } else { "sources" }
-                ),
-                "next_steps": if result.num_streams == 1 {
-                    format!(
-                        "Call capture_window with exe='wayland:{}' to capture this source.",
-                        result.primary_source_id
-                    )
-                } else {
-                    format!(
-                        "Call capture_window with any of: {}",
-                        result.all_source_ids.iter()
-                            .map(|id| format!("'wayland:{}'", id))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                }
-            });
-
-            // Step 5: Return success
-            let json_str = serde_json::to_string(&response_json).map_err(|e| {
-                McpError::internal_error(
-                    format!("Failed to serialize prime_wayland_consent response: {}", e),
-                    None,
-                )
-            })?;
-
-            Ok(CallToolResult::success(vec![Content::text(json_str)]))
-        }
-
-        // When not on Linux, return error
-        #[cfg(not(target_os = "linux"))]
-        {
-            Err(McpError::internal_error(
-                "prime_wayland_consent is only available on Linux in a Wayland session.",
+        // Step 1: Check for Wayland restore capability via typed field (no downcast needed!)
+        let wayland_capability = self.backend.wayland_restore.as_ref().ok_or_else(|| {
+            McpError::internal_error(
+                "prime_wayland_consent requires Wayland backend. This tool is only \
+                 available on Linux with Wayland compositor. Current backend does not \
+                 support this operation.",
                 None,
-            ))
-        }
+            )
+        })?;
+
+        // Step 2: Parse source_type string to enum
+        let source_type = parse_source_type(&params.source_type)
+            .map_err(|e| McpError::invalid_params(e, None))?;
+
+        // Step 3: Call backend prime_consent via trait object
+        let result = wayland_capability
+            .prime_consent(source_type, &params.source_id, params.include_cursor)
+            .await
+            .map_err(convert_capture_error_to_mcp)?;
+
+        // Step 4: Build structured JSON response
+        let response_json = serde_json::json!({
+            "status": "success",
+            "source_id": result.primary_source_id,
+            "all_source_ids": result.all_source_ids,
+            "num_streams": result.num_streams,
+            "source_type": params.source_type,
+            "details": format!(
+                "Permission granted for {} {}. Restore token(s) stored securely.",
+                result.num_streams,
+                if result.num_streams == 1 { "source" } else { "sources" }
+            ),
+            "next_steps": if result.num_streams == 1 {
+                format!(
+                    "Call capture_window with exe='wayland:{}' to capture this source.",
+                    result.primary_source_id
+                )
+            } else {
+                format!(
+                    "Call capture_window with any of: {}",
+                    result.all_source_ids.iter()
+                        .map(|id| format!("'wayland:{}'", id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        });
+
+        // Step 5: Return success
+        let json_str = serde_json::to_string(&response_json).map_err(|e| {
+            McpError::internal_error(
+                format!("Failed to serialize prime_wayland_consent response: {}", e),
+                None,
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![Content::text(json_str)]))
     }
 }
 
@@ -475,37 +552,33 @@ impl ScreenshotMcpServer {
 impl ScreenshotMcpServer {
     /// Captures a screenshot of a specific window
     ///
-    /// Finds a window matching the selector criteria and captures a screenshot
-    /// as PNG format with default settings. Returns both inline image data and
-    /// a file resource link for persistent access.
+    /// Finds a window matching the selector criteria and captures a screenshot.
+    /// Returns both inline image data and a file resource link for persistent access.
     ///
-    /// # Parameters
+    /// # Window Selection Parameters (at least one required)
     ///
-    /// - `title_substring_or_regex` (optional): Window title substring or regex
-    ///   pattern
+    /// - `titleSubstringOrRegex` (optional): Window title substring or regex pattern
     /// - `class` (optional): Window class name
     /// - `exe` (optional): Executable name
     ///
-    /// At least one of `title_substring_or_regex`, `class`, or `exe` must be
-    /// specified.
+    /// # Capture Options (all optional)
     ///
-    /// # Default Settings
-    ///
-    /// - Format: PNG (lossless)
-    /// - Quality: 80 (for JPEG/WebP, not applicable to PNG)
-    /// - Scale: 1.0 (original size)
-    /// - Cursor: Not included
+    /// - `format` (optional): Output format - "png", "jpeg", or "webp" (default: "webp")
+    /// - `quality` (optional): Quality 0-100 for JPEG/WebP (default: 80, ignored for PNG)
+    /// - `scale` (optional): Scale factor 0.1-2.0 (default: 1.0)
+    /// - `includeCursor` (optional): Include cursor in capture (default: false)
+    /// - `region` (optional): Crop region `{x, y, width, height}` (default: full window)
     ///
     /// # Returns
     ///
     /// A `CallToolResult` containing:
-    /// 1. Inline image content (base64-encoded PNG)
+    /// 1. Inline image content (base64-encoded)
     /// 2. Resource link with file:// URI
     /// 3. Metadata (dimensions, format, size)
     ///
     /// # Examples
     ///
-    /// Request:
+    /// Minimal request (uses defaults):
     /// ```json
     /// {
     ///   "method": "tools/call",
@@ -517,15 +590,33 @@ impl ScreenshotMcpServer {
     ///   }
     /// }
     /// ```
+    ///
+    /// Full options:
+    /// ```json
+    /// {
+    ///   "method": "tools/call",
+    ///   "params": {
+    ///     "name": "capture_window",
+    ///     "arguments": {
+    ///       "titleSubstringOrRegex": "Firefox",
+    ///       "format": "png",
+    ///       "quality": 95,
+    ///       "scale": 0.5,
+    ///       "includeCursor": true,
+    ///       "region": {"x": 0, "y": 0, "width": 800, "height": 600}
+    ///     }
+    ///   }
+    /// }
+    /// ```
     pub async fn capture_window(
         &self,
         params: CaptureWindowParams,
     ) -> Result<CallToolResult, McpError> {
         // Build WindowSelector from parameters
         let selector = WindowSelector {
-            title_substring_or_regex: params.title_substring_or_regex,
-            class: params.class,
-            exe: params.exe,
+            title_substring_or_regex: params.title_substring_or_regex.clone(),
+            class: params.class.clone(),
+            exe: params.exe.clone(),
         };
 
         // Validate that at least one selector field is provided
@@ -539,40 +630,65 @@ impl ScreenshotMcpServer {
             ));
         }
 
-        // Use agent-friendly capture options (WebP, quality 80, scale 1.0, max 1920px)
+        // Validate scale if provided (0.1-2.0 range)
+        if let Some(scale) = params.scale {
+            if !(0.1..=2.0).contains(&scale) {
+                return Err(McpError::invalid_params(
+                    format!("Invalid scale '{}': must be between 0.1 and 2.0", scale),
+                    None,
+                ));
+            }
+        }
+
+        // Validate region if provided (non-zero dimensions)
+        if let Some(ref region) = params.region {
+            if region.width == 0 || region.height == 0 {
+                return Err(McpError::invalid_params(
+                    "Invalid region: width and height must be greater than 0",
+                    None,
+                ));
+            }
+        }
+
+        // Build capture options from params (with defaults)
+        let scale = params.scale.unwrap_or(1.0);
+        let quality = params.quality.unwrap_or(80);
+        let include_cursor = params.include_cursor.unwrap_or(false);
+        let format = params.format.to_image_format();
+        let region = params.region.map(|r| r.to_region());
+
         let mut opts = CaptureOptions {
-            format: ImageFormat::Webp,
-            quality: 80,
-            scale: 1.0,
-            include_cursor: false,
-            region: None,
+            format,
+            quality,
+            scale,
+            include_cursor,
+            region,
             wayland_source: None,
             max_dimension: Some(1920), // Auto-scale 4K to ~1080p for efficient transfer
         };
         opts.validate();
 
+        // Get window resolver capability
+        let resolver = self.backend.resolver.as_ref().ok_or_else(|| {
+            McpError::internal_error("Window resolution is not available on this backend.", None)
+        })?;
+
         // Resolve window target
-        let handle = self
-            .backend
-            .resolve_target(&selector)
+        let handle = resolver
+            .resolve(&selector)
             .await
             .map_err(convert_capture_error_to_mcp)?;
 
-        // Capture the window
-        let mut image_buffer = self
+        // Capture the window using ScreenCapture capability
+        let image_buffer = self
             .backend
+            .capture
             .capture_window(handle, &opts)
             .await
             .map_err(convert_capture_error_to_mcp)?;
 
-        // Apply scaling if needed (scale is already validated to 0.1-2.0)
-        if (opts.scale - 1.0).abs() > f32::EPSILON {
-            image_buffer = image_buffer
-                .scale(opts.scale)
-                .map_err(convert_capture_error_to_mcp)?;
-        }
-
-        // Get dimensions after scaling
+        // Note: scaling is applied by the backend via opts.scale
+        // Get dimensions (already scaled if scale != 1.0)
         let dimensions = image_buffer.dimensions();
 
         // Encode the image
@@ -618,7 +734,8 @@ mod tests {
 
     #[test]
     fn test_server_creation_with_backend() {
-        let backend = Arc::new(MockBackend::new());
+        let mock = Arc::new(MockBackend::new());
+        let backend = Arc::new(composite_from_mock(mock));
         let temp_files = Arc::new(TempFileManager::new());
         let _server = ScreenshotMcpServer::new(backend, temp_files);
         // Verify creation with explicit backend works
@@ -695,8 +812,7 @@ mod tests {
         let result = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Firefox".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await;
 
@@ -728,8 +844,7 @@ mod tests {
         let result = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Visual Studio Code".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await;
 
@@ -737,10 +852,10 @@ mod tests {
 
         let tool_result = result.unwrap();
         let image = tool_result.content[0].as_image().unwrap();
-        assert_eq!(image.mime_type, "image/png", "should use default PNG format");
+        assert_eq!(image.mime_type, "image/webp", "should use default WebP format");
 
         let metadata_text = tool_result.content[2].as_text().unwrap();
-        assert!(metadata_text.text.contains("png"), "metadata should show png format");
+        assert!(metadata_text.text.contains("webp"), "metadata should show webp format");
     }
 
     #[tokio::test]
@@ -750,8 +865,7 @@ mod tests {
         let result = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Terminal".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await;
 
@@ -772,8 +886,7 @@ mod tests {
         let result = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("NonexistentWindow".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await;
 
@@ -792,13 +905,7 @@ mod tests {
         let server = ScreenshotMcpServer::new_with_mock();
 
         // No selector fields provided
-        let result = server
-            .capture_window(CaptureWindowParams {
-                title_substring_or_regex: None,
-                class: None,
-                exe: None,
-            })
-            .await;
+        let result = server.capture_window(CaptureWindowParams::default()).await;
 
         assert!(result.is_err(), "should fail when no selector fields provided");
 
@@ -811,28 +918,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_capture_window_always_png() {
+    async fn test_capture_window_always_webp() {
         let server = ScreenshotMcpServer::new_with_mock();
 
-        // Simplified version always uses PNG format (no format parameter)
+        // Always uses WebP format for agent-friendly defaults
         let result = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Firefox".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await;
 
-        assert!(result.is_ok(), "capture should succeed with default PNG");
+        assert!(result.is_ok(), "capture should succeed with default WebP");
 
         let tool_result = result.unwrap();
         let image = tool_result.content[0].as_image().unwrap();
-        assert_eq!(image.mime_type, "image/png", "should always use PNG format");
+        assert_eq!(image.mime_type, "image/webp", "should always use WebP format");
     }
 
     #[tokio::test]
     async fn test_temp_file_created_and_tracked() {
-        let backend = Arc::new(MockBackend::new());
+        let mock = Arc::new(MockBackend::new());
+        let backend = Arc::new(composite_from_mock(mock));
         let temp_files = Arc::new(TempFileManager::new());
         let server = ScreenshotMcpServer::new(backend, Arc::clone(&temp_files));
 
@@ -843,8 +950,7 @@ mod tests {
         let result = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Firefox".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await;
 
@@ -860,7 +966,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_captures_create_unique_files() {
-        let backend = Arc::new(MockBackend::new());
+        let mock = Arc::new(MockBackend::new());
+        let backend = Arc::new(composite_from_mock(mock));
         let temp_files = Arc::new(TempFileManager::new());
         let server = ScreenshotMcpServer::new(backend, Arc::clone(&temp_files));
 
@@ -868,8 +975,7 @@ mod tests {
         let _r1 = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Firefox".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -877,8 +983,7 @@ mod tests {
         let _r2 = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Visual Studio Code".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -886,8 +991,7 @@ mod tests {
         let _r3 = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Terminal".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -916,8 +1020,7 @@ mod tests {
         let result = server
             .capture_window(CaptureWindowParams {
                 title_substring_or_regex: Some("Firefox".to_string()),
-                class: None,
-                exe: None,
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -927,7 +1030,7 @@ mod tests {
 
         // Content 1: Image with base64 data
         let image = result.content[0].as_image().unwrap();
-        assert_eq!(image.mime_type, "image/png", "should use default PNG");
+        assert_eq!(image.mime_type, "image/webp", "should use default WebP");
         assert!(!image.data.is_empty(), "should have base64 data");
 
         // Content 2: Resource link with file:// URI
@@ -938,8 +1041,245 @@ mod tests {
         // Content 3: Metadata with JSON
         let metadata = result.content[2].as_text().unwrap();
         assert!(metadata.text.contains("dimensions"), "should have dimensions");
-        assert!(metadata.text.contains("png"), "should specify PNG format");
+        assert!(metadata.text.contains("webp"), "should specify WebP format");
         assert!(metadata.text.contains("size_bytes"), "should include file size");
+    }
+
+    // ========== New Capture Parameter Tests ==========
+
+    #[tokio::test]
+    async fn test_capture_window_with_png_format() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                format: CaptureFormat::Png,
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with PNG format");
+
+        let tool_result = result.unwrap();
+        let image = tool_result.content[0].as_image().unwrap();
+        assert_eq!(image.mime_type, "image/png", "should use PNG format");
+
+        let metadata_text = tool_result.content[2].as_text().unwrap();
+        assert!(metadata_text.text.contains("png"), "metadata should show png format");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_with_jpeg_format() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                format: CaptureFormat::Jpeg,
+                quality: Some(90),
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with JPEG format");
+
+        let tool_result = result.unwrap();
+        let image = tool_result.content[0].as_image().unwrap();
+        assert_eq!(image.mime_type, "image/jpeg", "should use JPEG format");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_with_custom_quality() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                quality: Some(50),
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with custom quality");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_with_scale() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                scale: Some(0.5),
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with 0.5 scale");
+
+        let tool_result = result.unwrap();
+        let metadata_text = tool_result.content[2].as_text().unwrap();
+
+        // Original is 1920x1080, 0.5 scale -> 960x540
+        assert!(metadata_text.text.contains("960"), "should have scaled width");
+        assert!(metadata_text.text.contains("540"), "should have scaled height");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_scale_out_of_range_fails() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        // Scale too low
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                scale: Some(0.05), // below 0.1 minimum
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_err(), "should fail with scale below 0.1");
+
+        let error = result.unwrap_err();
+        let error_msg = format!("{:?}", error);
+        assert!(
+            error_msg.contains("scale") && error_msg.contains("0.1"),
+            "error should mention scale range"
+        );
+
+        // Scale too high
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                scale: Some(3.0), // above 2.0 maximum
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_err(), "should fail with scale above 2.0");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_with_region() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                region: Some(CaptureRegion {
+                    x: 100,
+                    y: 100,
+                    width: 800,
+                    height: 600,
+                }),
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with region");
+
+        let tool_result = result.unwrap();
+        let metadata_text = tool_result.content[2].as_text().unwrap();
+
+        // Region crops to 800x600
+        assert!(metadata_text.text.contains("800"), "should have region width");
+        assert!(metadata_text.text.contains("600"), "should have region height");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_region_zero_dimensions_fails() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        // Zero width
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                region: Some(CaptureRegion {
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 100,
+                }),
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_err(), "should fail with zero width");
+
+        let error = result.unwrap_err();
+        let error_msg = format!("{:?}", error);
+        assert!(
+            error_msg.contains("region") || error_msg.contains("width"),
+            "error should mention invalid region"
+        );
+
+        // Zero height
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                region: Some(CaptureRegion {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 0,
+                }),
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_err(), "should fail with zero height");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_with_cursor() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                include_cursor: Some(true),
+                ..Default::default()
+            })
+            .await;
+
+        // MockBackend supports cursor, so this should succeed
+        assert!(result.is_ok(), "capture should succeed with cursor");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_all_options_combined() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        // Use a region that's smaller than the mock image (1920x1080)
+        // and a scale that keeps the result reasonable
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                format: CaptureFormat::Png,
+                quality: Some(95),
+                scale: Some(1.0), // Keep scale at 1.0 to avoid complex interactions
+                include_cursor: Some(true),
+                region: Some(CaptureRegion {
+                    x: 50,
+                    y: 50,
+                    width: 800,
+                    height: 600,
+                }),
+                ..Default::default()
+            })
+            .await;
+
+        match &result {
+            Ok(_) => {}
+            Err(e) => eprintln!("Error: {:?}", e),
+        }
+
+        assert!(result.is_ok(), "capture should succeed with all options");
+
+        let tool_result = result.unwrap();
+        let image = tool_result.content[0].as_image().unwrap();
+        assert_eq!(image.mime_type, "image/png", "should use PNG format");
     }
 
     // ========== Error Path Tests for MCP Error Code Mapping ==========

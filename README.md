@@ -4,6 +4,8 @@
 
 Capture application windows on Linux (Wayland/X11), Windows, and macOS via the Model Context Protocol.
 
+**Version:** 0.6.0 | [Changelog](./CHANGELOG.md)
+
 ## Status
 
 | Platform | Backend | Status |
@@ -68,17 +70,29 @@ flowchart LR
 ## Output
 
 Every capture returns:
-- **Image data:** Base64-encoded PNG/JPEG/WebP
+- **Image data:** Base64-encoded WebP (default), PNG, or JPEG
 - **File link:** Timestamped file in temp directory
+- **Metadata:** Dimensions, format, size, and capture options
 
 ```json
 {
   "content": [
-    { "type": "image", "mimeType": "image/png", "data": "iVBORw0KGgo..." },
-    { "type": "text", "text": "Saved to: /tmp/screenshot_2025-01-01_120000.png" }
+    { "type": "image", "mimeType": "image/webp", "data": "UklGR..." },
+    { "type": "text", "text": "[Screenshot](file:///tmp/screenshot-mcp/screenshot-2025-01-01.webp)" },
+    { "type": "text", "text": "## Capture Metadata\n{\"dimensions\": [1920, 1080], \"format\": \"webp\"}" }
   ]
 }
 ```
+
+### Capture Options (v0.6.0+)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `format` | `webp` | Output format: `webp`, `png`, `jpeg` |
+| `quality` | `80` | Compression (0-100, for webp/jpeg) |
+| `scale` | `1.0` | Resize factor (0.1-2.0) |
+| `includeCursor` | `false` | Include cursor in capture |
+| `region` | - | Crop area `{x, y, width, height}` |
 
 ## Documentation
 

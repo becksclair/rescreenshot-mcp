@@ -2,9 +2,10 @@
 
 ## Project Status
 
-**Current:** M0-M4, M6a Complete ✅ | M5 Deferred
+**Current:** M0-M4, M6a, v0.6.0 Complete ✅ | M5 Deferred
 **Code Quality:** 500+ tests passing, 0 warnings, production-ready
-**Last Updated:** 2025-12-14
+**Version:** 0.6.0 (breaking change: CaptureFacade removed)
+**Last Updated:** 2025-12-15
 
 **Important:** All testing and verification steps throughout this roadmap must be executed automatically by the coding agent. Manual testing steps should be converted to automated tests where possible.
 
@@ -22,16 +23,17 @@
 - [x] 23 unit tests passing
 - [x] Zero warnings, fully formatted code
 
-### M1: Core Capture Facade & Image Handling (Complete)
+### M1: Core Capture Capabilities & Image Handling (Complete)
 
-- [x] `CaptureFacade` trait with async methods
+- [x] Capability traits (`WindowEnumerator`, `WindowResolver`, `ScreenCapture`) - v0.6.0
+- [x] `CompositeBackend` for type-safe capability access - v0.6.0
 - [x] `MockBackend` for testing
 - [x] Image encoding pipeline (PNG/WebP/JPEG)
 - [x] Quality and scale parameters
 - [x] Temp file management with cleanup
 - [x] MCP content builders (inline + ResourceLinks)
 - [x] Comprehensive error types
-- [x] 174 unit tests passing
+- [x] 174+ unit tests passing
 
 ### M2: Wayland Backend (Complete)
 
@@ -115,7 +117,7 @@
 
 - [ ] Create `src/capture/mac_backend.rs`
 - [ ] Define `MacBackend` struct
-- [ ] Implement `CaptureFacade` trait with stubs
+- [ ] Implement capability traits (`WindowEnumerator`, `ScreenCapture`, etc.)
 - [ ] Add feature gate (`macos-screencapturekit`)
 - [ ] Export from `src/capture/mod.rs`
 - [ ] macOS 12+ detection
@@ -203,78 +205,143 @@
 **Priority:** Nice-to-have (not blocking releases)
 **Added:** 2025-12-15 (from code review retrospective)
 
-#### A1: Capability-Based Backend Traits
+#### A1: Capability-Based Backend Traits ✅ COMPLETE
 
-**Problem:** The current `CaptureFacade` trait is a "mega-trait" that forces all backends to implement methods they can't meaningfully support. For example, Wayland cannot enumerate windows (security model limitation), but it must implement `list_windows()` which returns fake "primed source" entries.
+**Status:** Complete as of v0.6.0 (2025-12-15)
 
-**Current Design:**
-```rust
-#[async_trait]
-pub trait CaptureFacade: Send + Sync {
-    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>>;
-    async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle>;
-    async fn capture_window(&self, handle: WindowHandle, opts: &CaptureOptions) -> CaptureResult<ImageBuffer>;
-    async fn capture_display(&self, display_id: Option<u32>, opts: &CaptureOptions) -> CaptureResult<ImageBuffer>;
-    fn capabilities(&self) -> Capabilities;
-    fn as_any(&self) -> &dyn std::any::Any;
-}
-```
+**Completed Tasks:**
+- [x] CLI: Uses capability traits directly
+- [x] MCP Server: Uses capability traits directly
+- [x] CaptureFacade: Removed (breaking change)
+- [x] Docs: Migration guide in CHANGELOG.md
+- [x] New MCP params: format, quality, scale, includeCursor, region
 
-**Proposed Design:**
-```rust
-// Composable capability traits
-#[async_trait]
-pub trait WindowEnumerator: Send + Sync {
-    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>>;
-}
+**Problem Solved:** The monolithic `CaptureFacade` trait forced backends to implement methods they couldn't support (e.g., Wayland's fake `list_windows()`). The MCP server used fragile `as_any().downcast_ref::<WaylandBackend>()` for Wayland-specific operations.
 
-#[async_trait]
-pub trait WindowResolver: Send + Sync {
-    async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle>;
-}
+**Solution Implemented:**
 
-#[async_trait]
-pub trait ScreenCapture: Send + Sync {
-    async fn capture(&self, target: CaptureTarget, opts: &CaptureOptions) -> CaptureResult<ImageBuffer>;
-}
+1. **New Capability Traits** (`capture/traits.rs`):
+   - `WindowEnumerator` - List capturable windows
+   - `WindowResolver` - Resolve selectors to handles
+   - `ScreenCapture` - Capture screenshots
+   - `WaylandRestoreCapable` - Wayland restore token workflow
+   - `BackendCapabilities` - Query backend capabilities
 
-// Backends implement only what they support
-struct WaylandBackend;  // implements ScreenCapture only
-struct X11Backend;      // implements WindowEnumerator + WindowResolver + ScreenCapture
-struct WindowsBackend;  // implements WindowEnumerator + WindowResolver + ScreenCapture
-```
+2. **CompositeBackend** (`capture/composite.rs`):
+   ```rust
+   pub struct CompositeBackend {
+       pub enumerator: Option<Arc<dyn WindowEnumerator>>,
+       pub resolver: Option<Arc<dyn WindowResolver>>,
+       pub capture: Arc<dyn ScreenCapture>,
+       pub wayland_restore: Option<Arc<dyn WaylandRestoreCapable>>,
+       pub capabilities: Capabilities,
+       pub name: &'static str,
+   }
+   ```
+
+3. **Type-Safe Capability Access** (no more downcasting!):
+   ```rust
+   // OLD (deprecated):
+   backend.as_any().downcast_ref::<WaylandBackend>()?.prime_consent(...);
+
+   // NEW (recommended):
+   backend.wayland_restore.as_ref()?.prime_consent(...);
+   ```
+
+4. **`create_default_backend()` returns `Arc<CompositeBackend>`**
+
+5. **`CaptureFacade` deprecated** with migration guide in docs
+
+**Files Modified:**
+- NEW: `capture/traits.rs`, `capture/composite.rs`
+- MODIFIED: `capture/mod.rs`, `capture/windows_backend.rs`, `capture/mock.rs`, `capture/wayland_backend.rs`, `capture/x11_backend.rs`
+- MODIFIED: `screenshot-mcp-server/src/mcp.rs`, `screenshot-cli/src/main.rs`
+- REMOVED: `LinuxAutoBackend` (no longer needed)
+
+**Backend Capability Matrix:**
+
+| Backend | WindowEnumerator | WindowResolver | ScreenCapture | WaylandRestore |
+|---------|------------------|----------------|---------------|----------------|
+| Windows | ✓ | ✓ | ✓ | - |
+| X11     | ✓ | ✓ | ✓ | - |
+| Wayland | - | ✓ | ✓ | ✓ |
+| Mock    | ✓ | ✓ | ✓ | - |
+
+---
+
+#### A1.5: Consolidate Test Infrastructure 📅 PLANNED
+
+**Status:** Planned (deferred from v0.6.0 release)
+**Priority:** Low (quality-of-life improvement)
+**Estimated Effort:** 1-2 days
+
+**Problem:** Test helper code is duplicated across multiple locations:
+- `tests/common/` (workspace root)
+- `crates/screenshot-core/tests/common/`
+- `crates/screenshot-mcp-server/tests/common/`
+
+This causes:
+- Confusing for contributors (which helpers to use?)
+- Duplicated code maintenance
+- Inconsistent patterns across test files
+
+**Solution:** Create a `testutil` module in `screenshot-core` that can be shared.
 
 **Implementation Steps:**
 
-1. **Phase 1: Define new traits** (non-breaking)
-   - [ ] Create `WindowEnumerator`, `WindowResolver`, `ScreenCapture` traits in `capture/traits.rs`
-   - [ ] Add blanket impls so existing `CaptureFacade` implementors auto-implement new traits
-   - [ ] Add tests for trait composition
+1. **Create testutil module in screenshot-core**
+   ```rust
+   // crates/screenshot-core/src/testutil/mod.rs
+   #[cfg(any(test, feature = "testutil"))]
+   pub mod windows_helpers;
+   #[cfg(any(test, feature = "testutil"))]
+   pub mod wayland_harness;
+   #[cfg(any(test, feature = "testutil"))]
+   pub mod timing;
+   ```
 
-2. **Phase 2: Update backends** (non-breaking)
-   - [ ] Add explicit trait impls to `WindowsBackend`, `X11Backend`, `WaylandBackend`
-   - [ ] Remove fake `list_windows()` from `WaylandBackend` (return error instead)
-   - [ ] Update `LinuxAutoBackend` to check capabilities before delegating
+2. **Add feature flag to Cargo.toml**
+   ```toml
+   [features]
+   testutil = []
+   ```
 
-3. **Phase 3: Update MCP handlers** (breaking)
-   - [ ] Update `list_windows` tool to check if backend implements `WindowEnumerator`
-   - [ ] Return appropriate error for Wayland-only sessions
-   - [ ] Update tool schemas to document capability requirements
+3. **Move helper files**
+   - `tests/common/windows_helpers.rs` → `src/testutil/windows_helpers.rs`
+   - `tests/common/wayland_harness.rs` → `src/testutil/wayland_harness.rs`
+   - Keep MCP-specific harness in `screenshot-mcp-server/tests/common/`
 
-4. **Phase 4: Deprecate `CaptureFacade`**
-   - [ ] Mark `CaptureFacade` as `#[deprecated]`
-   - [ ] Update all consumers to use capability traits
-   - [ ] Remove in next major version
+4. **Update dependent crates**
+   ```toml
+   # crates/screenshot-mcp-server/Cargo.toml
+   [dev-dependencies]
+   screenshot-core = { path = "../screenshot-core", features = ["testutil"] }
+   ```
 
-**Files to Modify:**
-- `crates/screenshot-core/src/capture/mod.rs` (new traits)
-- `crates/screenshot-core/src/capture/wayland_backend.rs`
-- `crates/screenshot-core/src/capture/x11_backend.rs`
-- `crates/screenshot-core/src/capture/windows_backend.rs`
-- `crates/screenshot-mcp-server/src/mcp.rs`
+5. **Delete duplicate files**
+   - `tests/common/` (workspace root)
+   - `crates/screenshot-core/tests/common/`
 
-**Breaking Changes:** Yes (Phase 3+)
-**Estimated Effort:** 2-3 days
+**Files to Create:**
+- `crates/screenshot-core/src/testutil/mod.rs`
+- `crates/screenshot-core/src/testutil/windows_helpers.rs`
+- `crates/screenshot-core/src/testutil/wayland_harness.rs`
+- `crates/screenshot-core/src/testutil/timing.rs`
+
+**Files to Delete:**
+- `tests/common/windows_helpers.rs`
+- `tests/common/wayland_harness.rs`
+- `tests/common/mod.rs`
+- `tests/common/mcp_harness.rs` (move to mcp-server)
+- `crates/screenshot-core/tests/common/*`
+
+**Success Criteria:**
+- ✅ All tests still pass
+- ✅ Single source of truth for test helpers
+- ✅ Feature-gated to avoid bloating production builds
+- ✅ Clear documentation on using testutil
+
+**Breaking Changes:** None (internal only)
 
 ---
 
@@ -424,7 +491,8 @@ pub async fn capture_window_to_file(
 
 ### Windows (M4)
 
-- **Test exit code 0xe06d7363**: Windows C++ exception during test cleanup. All 297 tests pass but the test harness process crashes on teardown with exit code `0xe06d7363` (Windows SEH exception). This appears to be a cleanup/teardown issue in the Windows Graphics Capture API or FFI layer, not a functional bug. Needs further investigation - likely related to COM object release order or WGC frame pool disposal.
+- Windows 10 build 17134+ required (WGC API minimum)
+- No per-window alpha channel (WGC limitation)
 
 ### Not Yet Implemented
 
@@ -505,19 +573,24 @@ pub async fn capture_window_to_file(
    - [x] Structured error hints (LLM auto-recovery)
    - [x] Tracing instrumentation (observability)
 
-3. **Immediate:** M5 macOS backend
+3. **Completed:** v0.6.0 breaking changes ✅
+   - [x] Removed deprecated `CaptureFacade` trait
+   - [x] Capability traits are now primary API
+   - [x] Added MCP capture options (format, quality, scale, cursor, region)
+   - [x] Migration guide in CHANGELOG.md
+
+4. **Immediate:** M5 macOS backend
    - Research ScreenCaptureKit API and TCC flows
    - Create macOS test plan
    - Implement backend when macOS env is ready
 
-4. **Deferred:** M6b macOS CI + packaging
+5. **Deferred:** M6b macOS CI + packaging
 
-5. **Future:** Architectural improvements (A1, A2)
-   - A1: Capability-based backend traits (cleaner abstraction)
+6. **Future:** Architectural improvements (A2)
    - A2: MCP streaming for large images (performance)
 
 ---
 
-**Document Version:** 3.1 (Code Quality Improvements)
+**Document Version:** 3.2 (v0.6.0 Release)
 **Last Updated:** 2025-12-15
 **Next Review:** When M5 complete

@@ -75,10 +75,12 @@ use async_trait::async_trait;
 use image::GenericImageView;
 
 use super::{
-    CaptureFacade, ImageBuffer,
+    BackendCapabilities, CaptureFacade, ImageBuffer, ScreenCapture, WaylandRestoreCapable,
+    WindowResolver,
     constants::{
         PIPEWIRE_FRAME_TIMEOUT_SECS, PIPEWIRE_LOOP_ITERATION_MS, WAYLAND_PORTAL_TIMEOUT_SECS,
     },
+    traits::PrimeConsentResult,
 };
 use crate::{
     error::{CaptureError, CaptureResult},
@@ -670,20 +672,6 @@ impl WaylandBackend {
     }
 }
 
-/// Result of prime_consent operation
-///
-/// Contains the source IDs where restore tokens were stored and metadata
-/// about the consent session.
-#[derive(Debug, Clone)]
-pub struct PrimeConsentResult {
-    /// Primary source ID (for single stream or first of multiple)
-    pub primary_source_id: String,
-    /// All source IDs (includes primary)
-    pub all_source_ids: Vec<String>,
-    /// Number of streams/sources captured
-    pub num_streams: usize,
-}
-
 #[async_trait]
 impl CaptureFacade for WaylandBackend {
     /// Lists Wayland capture targets derived from stored restore tokens
@@ -1196,16 +1184,101 @@ impl CaptureFacade for WaylandBackend {
     /// A [`Capabilities`] struct describing Wayland-specific features.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            supports_cursor: true,          // Portal supports cursor option
-            supports_region: true,          // Post-capture cropping
-            supports_wayland_restore: true, // Restore tokens for headless capture
-            supports_window_capture: false, // Wayland security limitation
-            supports_display_capture: true, // Via portal picker
+            supports_cursor: true,              // Portal supports cursor option
+            supports_region: true,              // Post-capture cropping
+            supports_wayland_restore: true,     // Restore tokens for headless capture
+            supports_window_enumeration: false, // Wayland security limitation
+            supports_display_capture: true,     // Via portal picker
         }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+// ============================================================================
+// Capability Trait Implementations
+// ============================================================================
+
+// Note: WaylandBackend does NOT implement WindowEnumerator because
+// Wayland's security model prevents window enumeration.
+
+#[async_trait]
+impl WindowResolver for WaylandBackend {
+    async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+        // Delegate to CaptureFacade implementation
+        CaptureFacade::resolve_target(self, selector).await
+    }
+}
+
+#[async_trait]
+impl ScreenCapture for WaylandBackend {
+    async fn capture_window(
+        &self,
+        handle: WindowHandle,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        // Delegate to CaptureFacade implementation
+        CaptureFacade::capture_window(self, handle, opts).await
+    }
+
+    async fn capture_display(
+        &self,
+        display_id: Option<u32>,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        // Delegate to CaptureFacade implementation
+        CaptureFacade::capture_display(self, display_id, opts).await
+    }
+}
+
+#[async_trait]
+impl WaylandRestoreCapable for WaylandBackend {
+    async fn prime_consent(
+        &self,
+        source_type: SourceType,
+        source_id: &str,
+        include_cursor: bool,
+    ) -> CaptureResult<PrimeConsentResult> {
+        // Delegate to inherent method (same type, no conversion needed)
+        WaylandBackend::prime_consent(self, source_type, source_id, include_cursor).await
+    }
+
+    async fn capture_with_token(
+        &self,
+        source_id: &str,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        // Use the existing capture_window with a wayland: prefixed handle
+        let handle = format!("wayland:{}", source_id);
+        CaptureFacade::capture_window(self, handle, opts).await
+    }
+
+    fn list_sources(&self) -> CaptureResult<Vec<String>> {
+        self.key_store.list_source_ids()
+    }
+}
+
+impl BackendCapabilities for WaylandBackend {
+    fn supports_cursor(&self) -> bool {
+        true // Portal supports cursor option
+    }
+
+    fn supports_region(&self) -> bool {
+        true // Post-capture cropping
+    }
+
+    fn supports_wayland_restore(&self) -> bool {
+        true // Restore tokens for headless capture
+    }
+
+    fn supports_window_enumeration(&self) -> bool {
+        false // Wayland security limitation
+    }
+
+    fn supports_display_capture(&self) -> bool {
+        true // Via portal picker
     }
 }
 
@@ -1231,7 +1304,7 @@ mod tests {
         assert!(caps.supports_cursor);
         assert!(caps.supports_region);
         assert!(caps.supports_wayland_restore);
-        assert!(!caps.supports_window_capture); // Wayland limitation
+        assert!(!caps.supports_window_enumeration); // Wayland limitation
         assert!(caps.supports_display_capture);
     }
 
