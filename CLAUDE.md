@@ -1,3 +1,3 @@
 # CLAUDE.md
 
-Read AGENTS.md for the instructions.
+**IMPORTANT**: You MUST read `AGENTS.md` before proceeding. It contains all project coding guidelines.

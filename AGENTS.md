@@ -1,5 +1,56 @@
 # AGENTS.md - screenshot-mcp
 
+Cross-platform screenshot capture MCP server written in Rust.
+
+## Quick Start
+
+```bash
+# Build
+cargo build --release
+
+# Run tests
+cargo test --all-features
+
+# Full CI check
+cargo fmt && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features
+```
+
+## Project Structure
+
+- `crates/screenshot-core/` - Core library with platform backends (Wayland, X11, Windows)
+- `crates/screenshot-mcp-server/` - MCP server implementation using rmcp SDK
+- `crates/screenshot-cli/` - Command-line interface
+
+## Key Files
+
+- `capture/mod.rs` - Backend auto-detection and facade
+- `capture/wayland_backend.rs` - Wayland via xdg-desktop-portal + PipeWire
+- `capture/x11_backend.rs` - X11 via xcap
+- `capture/windows_backend.rs` - Windows via WGC API
+- `capture/matching.rs` - Window matching strategies (regex, substring, fuzzy)
+- `capture/constants.rs` - Centralized timeout constants
+- `mcp.rs` - MCP tool handlers (health_check, list_windows, capture_window)
+
+## Code Patterns
+
+- Use `CaptureResult<T>` for error handling
+- All `CaptureError` variants must have `remediation_hint()` with actionable guidance
+- Thread-local regex caching via `get_or_compile_regex()` in matching.rs
+- ReDoS protection: max 1MB pattern size, max 10 repetition operators
+
+## Testing
+
+```bash
+# Run specific test
+cargo test test_name -- --nocapture
+
+# Windows-only tests
+cargo test windows_backend -- --nocapture
+
+# With all features
+cargo test --all-features
+```
+
 ## Commands
 
 - Build: `cargo build --release` or `just build`
@@ -26,7 +77,7 @@
 
 ## Code Style
 
-- Edition 2024, MSRV 1.75, max line width 100
+- Edition 2021, MSRV 1.75, max line width 100
 - Imports: group by std/external/crate, use `imports_granularity = "Crate"`
 - Error handling: use `thiserror` for error types, `anyhow` for general errors; `CaptureResult<T>` alias
 - All errors must include `remediation_hint()` method with actionable user guidance
