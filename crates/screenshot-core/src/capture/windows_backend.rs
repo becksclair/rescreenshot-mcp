@@ -42,12 +42,10 @@
 //! }
 //! ```
 
-use std::{any::Any, ffi::OsString, os::windows::ffi::OsStringExt, ptr, sync::mpsc};
+use std::{any::Any, ffi::OsString, os::windows::ffi::OsStringExt, ptr, sync::mpsc, time::Instant};
 
 use async_trait::async_trait;
-use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use image::{DynamicImage, RgbaImage};
-use regex::RegexBuilder;
 use windows_capture::{
     capture::GraphicsCaptureApiHandler,
     frame::Frame,
@@ -74,25 +72,14 @@ type BOOL = i32;
 const TRUE: BOOL = 1;
 const FALSE: BOOL = 0;
 
-use super::{CaptureFacade, ImageBuffer, WindowMatcher};
+use super::{
+    CaptureFacade, ImageBuffer, WindowMatcher,
+    constants::{LIST_WINDOWS_TIMEOUT_MS, WINDOWS_CAPTURE_TIMEOUT_MS},
+};
 use crate::{
     error::{CaptureError, CaptureResult},
     model::{BackendType, Capabilities, CaptureOptions, WindowHandle, WindowInfo, WindowSelector},
 };
-
-/// Timeout for window enumeration operations (1.5s)
-///
-/// Allows enumeration of many windows while keeping total latency reasonable.
-const LIST_WINDOWS_TIMEOUT_MS: u64 = 1500;
-
-/// Timeout for single window capture operations (2s)
-///
-/// WGC capture typically completes quickly, but we allow extra time for:
-/// - Large windows (4K, 8K displays)
-/// - GPU scheduling delays
-/// - Compositing effects
-/// - Complex Electron apps (Cursor, VS Code, etc.)
-const CAPTURE_WINDOW_TIMEOUT_MS: u64 = 5000;
 
 /// Minimum Windows build number for Windows Graphics Capture
 ///
@@ -422,87 +409,39 @@ impl WindowsBackend {
     // Note: These functions are kept for backward compatibility in tests.
     // The main matching logic now uses WindowMatcher with AND semantics.
 
-    /// Tries to match a window by regex pattern on title
-    ///
-    /// Returns the first window whose title matches the pattern.
-    /// Pattern size is limited to 1MB to prevent ReDoS.
+    /// Tries to match a window by regex pattern on title.
+    /// Delegates to the shared matching module.
     #[allow(dead_code)] // Used in tests
     fn try_regex_match(pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
-        // Limit pattern size to prevent ReDoS
-        if pattern.len() > 1_000_000 {
-            tracing::warn!("Regex pattern too large (>1MB), skipping regex match");
-            return None;
-        }
-
-        let regex = match RegexBuilder::new(pattern).case_insensitive(true).build() {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::debug!("Invalid regex pattern '{}': {}", pattern, e);
-                return None;
-            }
-        };
-
-        windows
-            .iter()
-            .find(|w| regex.is_match(&w.title))
-            .map(|w| w.id.clone())
+        super::matching::try_regex_match(pattern, windows)
     }
 
-    /// Tries to match a window by substring in title (case-insensitive)
+    /// Tries to match a window by substring in title (case-insensitive).
+    /// Delegates to the shared matching module.
     #[allow(dead_code)] // Used in tests
     fn try_substring_match(substring: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
-        fn normalize_whitespace_lowercase(s: &str) -> String {
-            s.split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase()
-        }
-
-        let lower_substring = normalize_whitespace_lowercase(substring);
-        windows
-            .iter()
-            .find(|w| normalize_whitespace_lowercase(&w.title).contains(&lower_substring))
-            .map(|w| w.id.clone())
+        super::matching::try_substring_match(substring, windows)
     }
 
-    /// Tries to match a window by exact class name (case-insensitive)
+    /// Tries to match a window by exact class name (case-insensitive).
+    /// Delegates to the shared matching module.
     #[allow(dead_code)] // Used in tests
     fn try_exact_class_match(class: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
-        let lower_class = class.to_lowercase();
-        windows
-            .iter()
-            .find(|w| w.class.to_lowercase() == lower_class)
-            .map(|w| w.id.clone())
+        super::matching::try_class_match(class, windows)
     }
 
-    /// Tries to match a window by exact executable name (case-insensitive)
+    /// Tries to match a window by exact executable name (case-insensitive).
+    /// Delegates to the shared matching module.
     #[allow(dead_code)] // Used in tests
     fn try_exact_exe_match(exe: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
-        let lower_exe = exe.to_lowercase();
-        windows
-            .iter()
-            .find(|w| w.owner.to_lowercase() == lower_exe)
-            .map(|w| w.id.clone())
+        super::matching::try_exe_match(exe, windows)
     }
 
-    /// Tries to match a window using fuzzy matching on title
-    ///
-    /// Returns the window with the highest score above threshold (60).
+    /// Tries to match a window using fuzzy matching on title.
+    /// Delegates to the shared matching module.
     #[allow(dead_code)] // Used in tests
     fn try_fuzzy_match(pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
-        let matcher = SkimMatcherV2::default();
-        const FUZZY_THRESHOLD: i64 = 60;
-
-        windows
-            .iter()
-            .filter_map(|w| {
-                matcher
-                    .fuzzy_match(&w.title, pattern)
-                    .filter(|&score| score >= FUZZY_THRESHOLD)
-                    .map(|score| (w, score))
-            })
-            .max_by_key(|(_, score)| *score)
-            .map(|(w, _)| w.id.clone())
+        super::matching::try_fuzzy_match(pattern, windows)
     }
 
     /// Creates a windows-capture Window from HWND
@@ -632,11 +571,11 @@ impl WindowsBackend {
 
         // Wait for frame with timeout
         let result = rx
-            .recv_timeout(std::time::Duration::from_millis(CAPTURE_WINDOW_TIMEOUT_MS))
+            .recv_timeout(std::time::Duration::from_millis(WINDOWS_CAPTURE_TIMEOUT_MS))
             .map_err(|_| {
                 tracing::warn!("Capture timeout waiting for frame");
                 CaptureError::CaptureTimeout {
-                    duration_ms: CAPTURE_WINDOW_TIMEOUT_MS,
+                    duration_ms: WINDOWS_CAPTURE_TIMEOUT_MS,
                 }
             })?;
 
@@ -779,11 +718,11 @@ impl WindowsBackend {
 
         // Wait for frame with timeout
         let result = rx
-            .recv_timeout(std::time::Duration::from_millis(CAPTURE_WINDOW_TIMEOUT_MS))
+            .recv_timeout(std::time::Duration::from_millis(WINDOWS_CAPTURE_TIMEOUT_MS))
             .map_err(|_| {
                 tracing::warn!("Capture timeout waiting for monitor frame");
                 CaptureError::CaptureTimeout {
-                    duration_ms: CAPTURE_WINDOW_TIMEOUT_MS,
+                    duration_ms: WINDOWS_CAPTURE_TIMEOUT_MS,
                 }
             })?;
 
@@ -800,8 +739,9 @@ impl CaptureFacade for WindowsBackend {
     ///
     /// Uses Win32 EnumWindows API to enumerate top-level windows.
     /// Filters out invisible windows and those without titles.
+    #[tracing::instrument(skip(self), fields(backend = "windows"))]
     async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
-        tracing::debug!("list_windows called");
+        let start = Instant::now();
 
         // Run enumeration in blocking task to avoid blocking async runtime
         let windows = Self::with_timeout(
@@ -819,7 +759,11 @@ impl CaptureFacade for WindowsBackend {
         )
         .await?;
 
-        tracing::info!("Found {} windows", windows.len());
+        tracing::info!(
+            duration_ms = start.elapsed().as_millis() as u64,
+            window_count = windows.len(),
+            "list_windows completed"
+        );
         Ok(windows)
     }
 
@@ -827,8 +771,9 @@ impl CaptureFacade for WindowsBackend {
     ///
     /// Uses `WindowMatcher` with AND semantics: when multiple fields are
     /// specified, all must match.
+    #[tracing::instrument(skip(self), fields(backend = "windows"))]
     async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
-        tracing::debug!("resolve_target called with selector: {:?}", selector);
+        let start = Instant::now();
 
         // Validate selector - at least one criterion must be specified
         if selector.title_substring_or_regex.is_none()
@@ -851,23 +796,31 @@ impl CaptureFacade for WindowsBackend {
 
         // Use WindowMatcher with AND semantics
         let matcher = WindowMatcher::new();
-        matcher.find_match(selector, &windows).ok_or_else(|| {
-            tracing::debug!("No window matched selector: {:?}", selector);
-            CaptureError::WindowNotFound {
-                selector: selector.clone(),
-            }
-        })
+        let result =
+            matcher
+                .find_match(selector, &windows)
+                .ok_or_else(|| CaptureError::WindowNotFound {
+                    selector: selector.clone(),
+                });
+
+        tracing::info!(
+            duration_ms = start.elapsed().as_millis() as u64,
+            success = result.is_ok(),
+            "resolve_target completed"
+        );
+        result
     }
 
     /// Captures a screenshot of a specific window
     ///
     /// Uses Windows Graphics Capture API via windows-capture crate.
+    #[tracing::instrument(skip(self, opts), fields(backend = "windows", handle = %handle))]
     async fn capture_window(
         &self,
         handle: WindowHandle,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        tracing::debug!("capture_window called with handle: {}, opts: {:?}", handle, opts);
+        let start = Instant::now();
 
         // Check Windows version before attempting capture
         Self::check_wgc_available()?;
@@ -899,7 +852,7 @@ impl CaptureFacade for WindowsBackend {
                     }
                 })?
             },
-            CAPTURE_WINDOW_TIMEOUT_MS,
+            WINDOWS_CAPTURE_TIMEOUT_MS,
         )
         .await?;
 
@@ -916,22 +869,29 @@ impl CaptureFacade for WindowsBackend {
             buffer = buffer.scale(scale)?;
         }
 
+        // Apply max_dimension auto-scaling for agent-friendly output
+        buffer = buffer.fit_to_max_dimension(opts.max_dimension)?;
+
+        let (width, height) = buffer.dimensions();
+        tracing::info!(
+            duration_ms = start.elapsed().as_millis() as u64,
+            width,
+            height,
+            "capture_window completed"
+        );
         Ok(buffer)
     }
 
     /// Captures a screenshot of an entire display
     ///
     /// Uses Windows Graphics Capture API for monitor capture.
+    #[tracing::instrument(skip(self, opts), fields(backend = "windows"))]
     async fn capture_display(
         &self,
         display_id: Option<u32>,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        tracing::debug!(
-            "capture_display called with display_id: {:?}, opts: {:?}",
-            display_id,
-            opts
-        );
+        let start = Instant::now();
 
         // Check Windows version before attempting capture
         Self::check_wgc_available()?;
@@ -955,7 +915,7 @@ impl CaptureFacade for WindowsBackend {
                     }
                 })?
             },
-            CAPTURE_WINDOW_TIMEOUT_MS,
+            WINDOWS_CAPTURE_TIMEOUT_MS,
         )
         .await?;
 
@@ -972,6 +932,16 @@ impl CaptureFacade for WindowsBackend {
             buffer = buffer.scale(scale)?;
         }
 
+        // Apply max_dimension auto-scaling for agent-friendly output
+        buffer = buffer.fit_to_max_dimension(opts.max_dimension)?;
+
+        let (width, height) = buffer.dimensions();
+        tracing::info!(
+            duration_ms = start.elapsed().as_millis() as u64,
+            width,
+            height,
+            "capture_display completed"
+        );
         Ok(buffer)
     }
 
@@ -1028,6 +998,9 @@ mod tests {
         assert!(downcast.is_some());
     }
 
+    /// Integration test: Lists windows from the real system.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[tokio::test]
     async fn test_list_windows_returns_windows() {
         let backend = WindowsBackend::new().unwrap();
@@ -1040,6 +1013,9 @@ mod tests {
         tracing::info!("Found {} windows in test", windows.len());
     }
 
+    /// Integration test: Enumerates real window handles.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_enumerate_window_handles() {
         let handles = WindowsBackend::enumerate_window_handles();
@@ -1075,6 +1051,9 @@ mod tests {
         assert!(info.is_none());
     }
 
+    /// Integration test: Resolves against real windows.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[tokio::test]
     async fn test_resolve_target_no_match() {
         let backend = WindowsBackend::new().unwrap();
@@ -1210,6 +1189,9 @@ mod tests {
         // threshold
     }
 
+    /// Integration test: Capture with invalid handle.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[tokio::test]
     async fn test_capture_window_invalid_handle() {
         let backend = WindowsBackend::new().unwrap();
@@ -1220,6 +1202,9 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Integration test: Capture with non-numeric handle.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[tokio::test]
     async fn test_capture_window_invalid_handle_format() {
         let backend = WindowsBackend::new().unwrap();
@@ -1238,7 +1223,7 @@ mod tests {
     #[test]
     fn test_timeout_constants() {
         assert_eq!(LIST_WINDOWS_TIMEOUT_MS, 1500);
-        assert_eq!(CAPTURE_WINDOW_TIMEOUT_MS, 5000);
+        assert_eq!(WINDOWS_CAPTURE_TIMEOUT_MS, 5000);
     }
 
     #[test]
@@ -1446,6 +1431,9 @@ mod tests {
         assert!(result.is_none()); // Should be rejected as too large
     }
 
+    /// Integration test: Enumerates real windows synchronously.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_enumerate_windows_sync_returns_vec() {
         let windows = WindowsBackend::enumerate_windows_sync();
@@ -1455,6 +1443,9 @@ mod tests {
         let _ = windows.len();
     }
 
+    /// Integration test: Verifies backend type on real windows.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_window_info_has_backend_type() {
         let windows = WindowsBackend::enumerate_windows_sync();
@@ -1476,6 +1467,9 @@ mod tests {
         assert!(!caps.supports_wayland_restore); // Windows-specific, not Wayland
     }
 
+    /// Integration test: Verifies real windows have titles.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[tokio::test]
     async fn test_list_windows_has_titles() {
         let backend = WindowsBackend::new().unwrap();
@@ -1487,6 +1481,9 @@ mod tests {
         }
     }
 
+    /// Integration test: Verifies real window IDs are valid.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[tokio::test]
     async fn test_list_windows_has_valid_ids() {
         let backend = WindowsBackend::new().unwrap();
@@ -1577,6 +1574,9 @@ mod tests {
         assert!((opts.scale - 0.5).abs() < 0.001);
     }
 
+    /// Integration test: Creates WGC window from HWND.
+    /// Requires `--features integration-tests` to run (can crash with invalid handles).
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_create_wc_window_from_valid_hwnd() {
         // Test that create_wc_window doesn't panic with a non-null handle
@@ -1622,6 +1622,9 @@ mod tests {
 
     // ========== Version Checking Tests ==========
 
+    /// Integration test: Gets real Windows build number.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_get_windows_build_returns_number() {
         let build = WindowsBackend::get_windows_build();
@@ -1631,6 +1634,9 @@ mod tests {
         let _ = build;
     }
 
+    /// Integration test: Checks real WGC availability.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_check_wgc_available_on_current_system() {
         let result = WindowsBackend::check_wgc_available();
@@ -1709,6 +1715,9 @@ mod tests {
         assert!(exe.is_empty());
     }
 
+    /// Integration test: Verifies enumeration consistency.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_multiple_window_enumeration_consistent() {
         let windows1 = WindowsBackend::enumerate_windows_sync();
@@ -1719,6 +1728,9 @@ mod tests {
         assert!(!windows2.is_empty());
     }
 
+    /// Integration test: Capture with immediately closed handle.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[tokio::test]
     async fn test_capture_window_closed_immediately() {
         let backend = WindowsBackend::new().unwrap();
@@ -1788,18 +1800,27 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_match_with_spaces() {
+    fn test_substring_match_with_multiple_spaces() {
+        // Title has multiple spaces between words
         let windows = vec![WindowInfo {
             id: "1".to_string(),
-            title: "Visual   Studio   Code".to_string(), // Multiple spaces
-            class: "VSCode".to_string(),
-            owner: "Code.exe".to_string(),
+            title: "Visual   Studio   Code".to_string(),
+            class: "Test".to_string(),
+            owner: "test.exe".to_string(),
             pid: 1234,
             backend: BackendType::Windows,
         }];
 
-        // Substring match should still work
+        // Single-space pattern won't match triple-spaced title
         let result = WindowsBackend::try_substring_match("Studio Code", &windows);
+        assert!(result.is_none(), "Single-space pattern should not match triple-spaced title");
+
+        // But matching with triple spaces works
+        let result = WindowsBackend::try_substring_match("Studio   Code", &windows);
+        assert_eq!(result, Some("1".to_string()));
+
+        // Single word still matches
+        let result = WindowsBackend::try_substring_match("Studio", &windows);
         assert_eq!(result, Some("1".to_string()));
     }
 
@@ -1848,6 +1869,9 @@ mod tests {
         assert!(WindowsBackend::try_exact_exe_match("Code.exe", &windows).is_some());
     }
 
+    /// Integration test: Verifies enumeration filters hidden windows.
+    /// Requires `--features integration-tests` to run.
+    #[cfg(feature = "integration-tests")]
     #[test]
     fn test_window_enumeration_filters_hidden() {
         // This test verifies that the enumeration callback filters out hidden windows

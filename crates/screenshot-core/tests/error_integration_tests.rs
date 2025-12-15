@@ -22,7 +22,11 @@ mod common;
 mod wayland_error_integration {
     use std::sync::Arc;
 
-    use screenshot_core::{capture::CaptureFacade, model::SourceType, util::key_store::KeyStore};
+    use screenshot_core::{
+        capture::{CaptureFacade, ImageBuffer},
+        model::SourceType,
+        util::key_store::KeyStore,
+    };
 
     // Import test harness utilities
     use crate::common::wayland_harness::*;
@@ -182,7 +186,7 @@ mod wayland_error_integration {
         let opts = default_test_capture_options();
 
         // Measure capture operation (including fallback)
-        let result = measure_operation(
+        let result: Result<(ImageBuffer, _), _> = measure_operation(
             "capture_window",
             backend.capture_window(source_id.to_string(), &opts),
         )

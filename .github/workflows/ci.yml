@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  ACT: ''
 
 jobs:
   test-linux:
@@ -17,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        container: ['ubuntu:22.04', 'fedora:39']
+        container: ['ubuntu:24.04', 'fedora:42']
     container:
       image: ${{ matrix.container }}
     steps:
@@ -36,7 +37,7 @@ jobs:
             libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev \
             libdrm-dev libgbm-dev libegl1-mesa-dev \
             libsecret-1-dev \
-            libpipewire-0.3-dev libspa-0.2-dev \
+            libpipewire-0.3-dev \
             xvfb
 
       - name: Install Dependencies (Fedora)
@@ -53,14 +54,17 @@ jobs:
             pipewire-devel
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly
           components: rustfmt, clippy, llvm-tools-preview
 
       - name: Rust cache
+        if: ${{ !env.ACT }}  # Skipped in act (container jobs lack Node.js)
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-llvm-cov
+        if: ${{ !env.ACT }}  # Skipped in act (container jobs lack Node.js)
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Check formatting
@@ -70,7 +74,12 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run tests (with coverage)
+        if: ${{ !env.ACT }}
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Run tests
+        if: ${{ env.ACT }}
+        run: cargo test --all-features --workspace
 
       - name: Run X11 integration tests (headless)
         if: startsWith(matrix.container, 'ubuntu')
@@ -78,6 +87,7 @@ jobs:
           xvfb-run -a cargo test --test x11_integration_tests -p screenshot-core --all-features
 
       - name: Upload coverage to Codecov
+        if: ${{ !env.ACT }}  # Skipped in act (container jobs lack Node.js)
         uses: codecov/codecov-action@v3
         with:
           files: lcov.info
@@ -93,11 +103,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly
           components: rustfmt, clippy
 
       - name: Rust cache
+        if: ${{ !env.ACT }}  # Skipped in act (unsupported platform)
         uses: Swatinem/rust-cache@v2
 
       - name: Check formatting

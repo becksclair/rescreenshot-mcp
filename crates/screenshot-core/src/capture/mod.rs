@@ -23,6 +23,7 @@ use crate::{
 #[cfg(target_os = "linux")]
 use crate::error::CaptureError;
 
+pub mod constants;
 pub mod image_buffer;
 pub mod matching;
 pub mod mock;
@@ -103,8 +104,11 @@ impl CaptureFacade for LinuxAutoBackend {
         let mut windows = self.primary.list_windows().await?;
 
         if let Some(fallback) = &self.fallback {
-            if let Ok(mut more) = fallback.list_windows().await {
-                windows.append(&mut more);
+            match fallback.list_windows().await {
+                Ok(mut more) => windows.append(&mut more),
+                Err(e) => {
+                    tracing::warn!("Fallback backend list_windows failed (ignoring): {}", e);
+                }
             }
         }
 
@@ -122,8 +126,11 @@ impl CaptureFacade for LinuxAutoBackend {
             match fallback.resolve_target(selector).await {
                 Ok(handle) => return Ok(handle),
                 Err(e) if !Self::should_fallback_on_error(&e) => return Err(e),
-                Err(_) => {
-                    // Fall through to primary.
+                Err(e) => {
+                    tracing::debug!(
+                        "Fallback backend resolve_target failed, trying primary: {}",
+                        e
+                    );
                 }
             }
         }

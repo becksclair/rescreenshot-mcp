@@ -643,15 +643,59 @@ impl KeyStore {
             .join("wayland-source-index.json")
     }
 
-    /// Derives a machine-specific encryption key using HKDF
+    /// Derives a machine-specific encryption key using HKDF (v3 with random machine key)
     ///
-    /// Uses HKDF-SHA256 with hostname + username as input key material
-    /// for proper key derivation with cryptographic guarantees.
+    /// Uses HKDF-SHA256 with machine key + hostname + username as input key material.
+    /// The machine key is a random 32-byte value stored at:
+    /// `~/.local/state/screenshot-mcp/.machine_key` (using `XDG_STATE_HOME`)
+    ///
+    /// This provides strong entropy that is unpredictable even on shared systems.
     ///
     /// Only available when file-token-fallback feature is enabled.
     #[cfg(feature = "file-token-fallback")]
     fn derive_encryption_key() -> [u8; 32] {
-        // Collect input key material
+        Self::derive_encryption_key_v3()
+    }
+
+    /// V3 key derivation with random machine key (strong entropy)
+    #[cfg(feature = "file-token-fallback")]
+    fn derive_encryption_key_v3() -> [u8; 32] {
+        let mut ikm = Vec::new();
+
+        // Primary entropy: random machine key (generated once, stored securely)
+        if let Ok(machine_key) = Self::get_or_create_machine_key() {
+            ikm.extend_from_slice(&machine_key);
+            tracing::debug!("Using machine key for v3 key derivation");
+        } else {
+            tracing::warn!("Machine key unavailable, v3 key derivation will use weaker entropy");
+        }
+
+        // Secondary entropy (defense in depth): hostname + username
+        if let Ok(hostname) = hostname::get() {
+            ikm.extend_from_slice(hostname.as_encoded_bytes());
+        }
+        if let Ok(user) = std::env::var("USER") {
+            ikm.extend_from_slice(user.as_bytes());
+        } else if let Ok(user) = std::env::var("USERNAME") {
+            ikm.extend_from_slice(user.as_bytes());
+        }
+
+        let hk = Hkdf::<Sha256>::new(
+            Some(b"screenshot-mcp-wayland-v3"), // v3 salt
+            &ikm,
+        );
+
+        let mut okm = [0u8; 32];
+        hk.expand(b"chacha20poly1305-key", &mut okm)
+            .expect("32 bytes is valid for HKDF-SHA256");
+
+        okm
+    }
+
+    /// V2 key derivation (legacy: hostname + username only)
+    /// Used for migration from v2 encrypted files to v3
+    #[cfg(feature = "file-token-fallback")]
+    fn derive_encryption_key_v2() -> [u8; 32] {
         let mut ikm = Vec::new();
         if let Ok(hostname) = hostname::get() {
             ikm.extend_from_slice(hostname.as_encoded_bytes());
@@ -662,10 +706,9 @@ impl KeyStore {
             ikm.extend_from_slice(user.as_bytes());
         }
 
-        // Use HKDF for proper key derivation
         let hk = Hkdf::<Sha256>::new(
-            Some(b"screenshot-mcp-wayland-v2"), // Salt (version bumped)
-            &ikm,                               // Input key material
+            Some(b"screenshot-mcp-wayland-v2"), // v2 salt
+            &ikm,
         );
 
         let mut okm = [0u8; 32];
@@ -673,6 +716,94 @@ impl KeyStore {
             .expect("32 bytes is valid for HKDF-SHA256");
 
         okm
+    }
+
+    /// Gets or creates a random machine key for encryption
+    ///
+    /// The machine key is stored at `~/.local/state/screenshot-mcp/.machine_key`
+    /// (using `XDG_STATE_HOME`) with 0600 permissions. We use state directory
+    /// rather than data directory because machine keys are ephemeral state that
+    /// should be regenerated on fresh installs, not backed up or transferred.
+    ///
+    /// This provides strong entropy that cannot be predicted even by users who
+    /// know the hostname and username.
+    #[cfg(feature = "file-token-fallback")]
+    fn get_or_create_machine_key() -> CaptureResult<[u8; 32]> {
+        let key_path = Self::get_machine_key_path();
+
+        // Try to read existing key
+        if key_path.exists() {
+            match fs::read(&key_path) {
+                Ok(data) if data.len() == 32 => {
+                    let key: [u8; 32] =
+                        data.try_into()
+                            .map_err(|_| CaptureError::EncryptionFailed {
+                                reason: "Machine key has wrong length".to_string(),
+                            })?;
+                    return Ok(key);
+                }
+                Ok(_) => {
+                    tracing::warn!("Machine key file corrupted, regenerating");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to read machine key: {}", e);
+                }
+            }
+        }
+
+        // Generate new random key
+        let mut key = [0u8; 32];
+        {
+            use rand::TryRngCore as _;
+            let mut rng = rand::rngs::OsRng;
+            rng.try_fill_bytes(&mut key)
+                .map_err(|e| CaptureError::EncryptionFailed {
+                    reason: format!("Failed to generate machine key: {}", e),
+                })?;
+        }
+
+        // Ensure parent directory exists
+        if let Some(parent) = key_path.parent() {
+            fs::create_dir_all(parent).map_err(CaptureError::IoError)?;
+        }
+
+        // Write with restrictive permissions (set atomically at creation to avoid race)
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600) // Owner read/write only, set at creation
+                .open(&key_path)
+                .map_err(CaptureError::IoError)?
+        };
+
+        #[cfg(not(unix))]
+        let mut file = fs::File::create(&key_path).map_err(CaptureError::IoError)?;
+
+        file.write_all(&key).map_err(CaptureError::IoError)?;
+
+        tracing::info!("Generated new machine key at {:?}", key_path);
+        Ok(key)
+    }
+
+    /// Gets the path to the machine key file
+    ///
+    /// Uses `XDG_STATE_HOME` (default: `~/.local/state`) for ephemeral state data.
+    /// Machine keys are regenerated on fresh installs and don't need backup.
+    #[cfg(feature = "file-token-fallback")]
+    fn get_machine_key_path() -> PathBuf {
+        let state_dir = if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
+            PathBuf::from(dir)
+        } else if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".local/state")
+        } else {
+            PathBuf::from("/tmp")
+        };
+
+        state_dir.join("screenshot-mcp").join(".machine_key")
     }
 
     /// Stores token in encrypted file
@@ -700,15 +831,24 @@ impl KeyStore {
 
     /// Adds a source ID to the persisted index (no-op if already present)
     fn record_source_id(&self, source_id: &str) -> CaptureResult<()> {
-        let mut index = self
-            .source_index
-            .write()
-            .map_err(|e| CaptureError::EncryptionFailed {
-                reason: format!("Failed to lock source index: {}", e),
-            })?;
+        let snapshot = {
+            let mut index =
+                self.source_index
+                    .write()
+                    .map_err(|e| CaptureError::EncryptionFailed {
+                        reason: format!("Failed to lock source index: {}", e),
+                    })?;
 
-        if index.insert(source_id.to_string()) {
-            self.save_index(&index)?;
+            if index.insert(source_id.to_string()) {
+                Some(index.clone())
+            } else {
+                None
+            }
+        }; // Write lock released here
+
+        // Disk I/O outside lock - doesn't block readers
+        if let Some(index_snapshot) = snapshot {
+            self.save_index(&index_snapshot)?;
         }
 
         Ok(())
@@ -716,15 +856,24 @@ impl KeyStore {
 
     /// Removes a source ID from the persisted index (no-op if absent)
     fn remove_source_id(&self, source_id: &str) -> CaptureResult<()> {
-        let mut index = self
-            .source_index
-            .write()
-            .map_err(|e| CaptureError::EncryptionFailed {
-                reason: format!("Failed to lock source index: {}", e),
-            })?;
+        let snapshot = {
+            let mut index =
+                self.source_index
+                    .write()
+                    .map_err(|e| CaptureError::EncryptionFailed {
+                        reason: format!("Failed to lock source index: {}", e),
+                    })?;
 
-        if index.remove(source_id) {
-            self.save_index(&index)?;
+            if index.remove(source_id) {
+                Some(index.clone())
+            } else {
+                None
+            }
+        }; // Write lock released here
+
+        // Disk I/O outside lock - doesn't block readers
+        if let Some(index_snapshot) = snapshot {
+            self.save_index(&index_snapshot)?;
         }
 
         Ok(())
@@ -749,22 +898,27 @@ impl KeyStore {
             return Ok(());
         }
 
-        let mut index = self
-            .source_index
-            .write()
-            .map_err(|e| CaptureError::EncryptionFailed {
-                reason: format!("Failed to lock source index: {}", e),
-            })?;
+        let snapshot = {
+            let mut index =
+                self.source_index
+                    .write()
+                    .map_err(|e| CaptureError::EncryptionFailed {
+                        reason: format!("Failed to lock source index: {}", e),
+                    })?;
 
-        let mut changed = false;
-        for key in keys {
-            if index.insert(key) {
-                changed = true;
+            let mut changed = false;
+            for key in keys {
+                if index.insert(key) {
+                    changed = true;
+                }
             }
-        }
 
-        if changed {
-            self.save_index(&index)?;
+            if changed { Some(index.clone()) } else { None }
+        }; // Write lock released here
+
+        // Disk I/O outside lock - doesn't block readers
+        if let Some(index_snapshot) = snapshot {
+            self.save_index(&index_snapshot)?;
         }
 
         Ok(())
@@ -915,11 +1069,17 @@ impl KeyStore {
         Ok(())
     }
 
-    /// Loads tokens from encrypted file with automatic v1→v2 migration
+    /// Loads tokens from encrypted file with automatic v1→v2→v3 migration
     ///
-    /// Supports two formats:
+    /// Supports formats:
     /// - v1 (legacy): [ciphertext] with fixed nonce "screenmcp123"
-    /// - v2 (current): [version:1][nonce:12][ciphertext]
+    /// - v2 (legacy): [version:1][nonce:12][ciphertext] with hostname+username key
+    /// - v3 (current): Same as v2 but with machine_key+hostname+username key
+    ///
+    /// Auto-migration:
+    /// 1. Try decryption with v3 key (current)
+    /// 2. If fails, try v2 key (legacy) and re-encrypt with v3
+    /// 3. If v2 fails, try v1 format and re-encrypt with v3
     ///
     /// Only available when file-token-fallback feature is enabled.
     #[cfg(feature = "file-token-fallback")]
@@ -938,30 +1098,71 @@ impl KeyStore {
             return Ok(HashMap::new());
         }
 
-        let cipher = ChaCha20Poly1305::new_from_slice(encryption_key).map_err(|e| {
+        // Create cipher with v3 key (passed in)
+        let cipher_v3 = ChaCha20Poly1305::new_from_slice(encryption_key).map_err(|e| {
             CaptureError::EncryptionFailed {
                 reason: format!("Failed to create cipher: {}", e),
             }
         })?;
 
-        // Try v2 format first (version byte + nonce + ciphertext)
+        // Try v2/v3 format (version byte = 2, nonce + ciphertext)
         if data.len() > 13 && data[0] == 2 {
-            tracing::debug!("Loading token file in v2 format");
-            return Self::load_v2(&data[1..], &cipher);
+            // Try with v3 key first
+            match Self::load_v2(&data[1..], &cipher_v3) {
+                Ok(tokens) => {
+                    tracing::debug!("Loaded token file with v3 key");
+                    return Ok(tokens);
+                }
+                Err(_) => {
+                    // Try with v2 key (migration path)
+                    let v2_key = Self::derive_encryption_key_v2();
+                    let cipher_v2 = ChaCha20Poly1305::new_from_slice(&v2_key).map_err(|e| {
+                        CaptureError::EncryptionFailed {
+                            reason: format!("Failed to create v2 cipher: {}", e),
+                        }
+                    })?;
+
+                    match Self::load_v2(&data[1..], &cipher_v2) {
+                        Ok(tokens) => {
+                            tracing::info!("Loaded legacy v2-keyed tokens, migrating to v3 key");
+                            // Re-save with v3 key
+                            if let Err(e) = Self::save_v2_format(&tokens, file_path, encryption_key)
+                            {
+                                tracing::warn!("Failed to migrate to v3 key: {}", e);
+                            } else {
+                                tracing::info!("Successfully migrated tokens to v3 key");
+                            }
+                            return Ok(tokens);
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to decrypt v2 format with either v3 or v2 key: {}",
+                                e
+                            );
+                            return Err(e);
+                        }
+                    }
+                }
+            }
         }
 
-        // Try v1 format (legacy fixed nonce) and auto-migrate
-        tracing::info!(
-            "Detected legacy token file format (v1), attempting to load and migrate to v2"
-        );
-        match Self::load_v1(&data, &cipher) {
+        // Try v1 format (legacy fixed nonce) - use v2 key since v1 predates v3
+        tracing::info!("Detected legacy token file format (v1), attempting to load and migrate");
+        let v2_key = Self::derive_encryption_key_v2();
+        let cipher_v2 = ChaCha20Poly1305::new_from_slice(&v2_key).map_err(|e| {
+            CaptureError::EncryptionFailed {
+                reason: format!("Failed to create v2 cipher: {}", e),
+            }
+        })?;
+
+        match Self::load_v1(&data, &cipher_v2) {
             Ok(tokens) => {
-                // Auto-upgrade to v2 format
-                tracing::info!("Successfully loaded v1 tokens, migrating to v2 format");
+                // Auto-upgrade to v3 format
+                tracing::info!("Successfully loaded v1 tokens, migrating to v3 format");
                 if let Err(e) = Self::save_v2_format(&tokens, file_path, encryption_key) {
-                    tracing::warn!("Failed to migrate token file to v2: {}", e);
+                    tracing::warn!("Failed to migrate token file to v3: {}", e);
                 } else {
-                    tracing::info!("Successfully migrated token file to v2 format");
+                    tracing::info!("Successfully migrated token file to v3 format");
                 }
                 Ok(tokens)
             }
@@ -1121,19 +1322,8 @@ mod tests {
     }
 
     fn with_temp_data_dir<F: FnOnce()>(f: F) {
-        let old = std::env::var("XDG_DATA_HOME").ok();
         let tmp = tempfile::tempdir().expect("tempdir");
-
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", tmp.path());
-        }
-
-        f();
-
-        match old {
-            Some(val) => unsafe { std::env::set_var("XDG_DATA_HOME", val) },
-            None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
-        }
+        temp_env::with_var("XDG_DATA_HOME", Some(tmp.path().to_str().unwrap()), f);
     }
 
     #[test]

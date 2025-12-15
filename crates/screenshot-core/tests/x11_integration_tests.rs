@@ -34,6 +34,7 @@ mod tests {
         connection::Connection as _,
         protocol::xproto::{ConnectionExt as _, WindowClass},
         rust_connection::RustConnection,
+        wrapper::ConnectionExt as WrapperConnectionExt,
     };
 
     /// Helper to skip test if $DISPLAY not set
@@ -109,7 +110,7 @@ mod tests {
         // Wait a moment for the window to appear
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        Ok((conn, win_id, screen_num))
+        Ok((conn, win_id, screen_num as u32))
     }
 
     #[tokio::test]

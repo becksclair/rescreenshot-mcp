@@ -74,7 +74,12 @@ use ashpd::desktop::{
 use async_trait::async_trait;
 use image::GenericImageView;
 
-use super::{CaptureFacade, ImageBuffer};
+use super::{
+    CaptureFacade, ImageBuffer,
+    constants::{
+        PIPEWIRE_FRAME_TIMEOUT_SECS, PIPEWIRE_LOOP_ITERATION_MS, WAYLAND_PORTAL_TIMEOUT_SECS,
+    },
+};
 use crate::{
     error::{CaptureError, CaptureResult},
     model::{
@@ -108,21 +113,6 @@ pub struct WaylandBackend {
 }
 
 impl WaylandBackend {
-    /// Default timeout for portal operations (30 seconds)
-    ///
-    /// Portal operations include user interaction (permission dialogs), DBus
-    /// communication with xdg-desktop-portal, and compositor-specific delays.
-    /// 30 seconds accommodates typical user response times plus system
-    /// overhead.
-    const DEFAULT_PORTAL_TIMEOUT_SECS: u64 = 30;
-
-    /// Timeout for PipeWire frame capture (5 seconds)
-    ///
-    /// Frame capture should be immediate once the PipeWire stream is connected.
-    /// 5 seconds accounts for stream initialization and the first frame
-    /// arrival, with buffer for system load spikes.
-    const PIPEWIRE_FRAME_TIMEOUT_SECS: u64 = 5;
-
     /// Creates a new WaylandBackend instance
     ///
     /// # Arguments
@@ -305,7 +295,7 @@ impl WaylandBackend {
 
             // Run main loop until frame is captured or timeout
             let start = std::time::Instant::now();
-            let timeout_duration = Duration::from_secs(Self::PIPEWIRE_FRAME_TIMEOUT_SECS);
+            let timeout_duration = Duration::from_secs(PIPEWIRE_FRAME_TIMEOUT_SECS);
 
             while !frame_captured.load(Ordering::Relaxed) {
                 if start.elapsed() > timeout_duration {
@@ -315,8 +305,10 @@ impl WaylandBackend {
                     });
                 }
 
-                // Run one iteration of the main loop (with 10ms timeout)
-                let _result = mainloop.loop_().iterate(Duration::from_millis(10));
+                // Run one iteration of the main loop
+                let _result = mainloop
+                    .loop_()
+                    .iterate(Duration::from_millis(PIPEWIRE_LOOP_ITERATION_MS));
             }
 
             // Extract captured data
@@ -672,7 +664,7 @@ impl WaylandBackend {
                     num_streams: streams.len(),
                 })
             },
-            Self::DEFAULT_PORTAL_TIMEOUT_SECS,
+            WAYLAND_PORTAL_TIMEOUT_SECS,
         )
         .await
     }
@@ -1011,7 +1003,7 @@ impl CaptureFacade for WaylandBackend {
 
                 Ok(image_buffer)
             },
-            Self::DEFAULT_PORTAL_TIMEOUT_SECS,
+            WAYLAND_PORTAL_TIMEOUT_SECS,
         )
         .await
     }
@@ -1185,7 +1177,7 @@ impl CaptureFacade for WaylandBackend {
 
                 Ok(image_buffer)
             },
-            Self::DEFAULT_PORTAL_TIMEOUT_SECS,
+            WAYLAND_PORTAL_TIMEOUT_SECS,
         )
         .await
     }

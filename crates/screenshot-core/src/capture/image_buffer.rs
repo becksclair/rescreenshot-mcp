@@ -111,6 +111,74 @@ impl ImageBuffer {
         Ok(Self::new(scaled))
     }
 
+    /// Scales the image to fit within the specified maximum dimension
+    ///
+    /// If either width or height exceeds `max_dim`, the image is proportionally
+    /// scaled down so the larger dimension equals `max_dim`. If both dimensions
+    /// are already within the limit, the original image is returned unchanged.
+    ///
+    /// This is useful for AI agent verification where legible images are needed
+    /// but pixel-perfect 4K resolution is overkill (and produces huge files).
+    ///
+    /// # Arguments
+    ///
+    /// * `max_dim` - Maximum allowed width or height. Pass `None` to skip scaling.
+    ///
+    /// # Returns
+    ///
+    /// A new `ImageBuffer` scaled to fit, or the original if already within bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use screenshot_core::capture::ImageBuffer;
+    ///
+    /// // 4K image (3840x2160)
+    /// let img = ImageBuffer::from_test_pattern(3840, 2160);
+    ///
+    /// // Scale to max 1920 -> becomes 1920x1080
+    /// let scaled = img.fit_to_max_dimension(Some(1920)).unwrap();
+    /// assert_eq!(scaled.dimensions(), (1920, 1080));
+    ///
+    /// // Already within bounds -> no change
+    /// let small = ImageBuffer::from_test_pattern(1280, 720);
+    /// let unchanged = small.fit_to_max_dimension(Some(1920)).unwrap();
+    /// assert_eq!(unchanged.dimensions(), (1280, 720));
+    /// ```
+    pub fn fit_to_max_dimension(self, max_dim: Option<u32>) -> CaptureResult<Self> {
+        let Some(max_dim) = max_dim else {
+            return Ok(self);
+        };
+
+        if max_dim == 0 {
+            return Ok(self);
+        }
+
+        let (width, height) = self.dimensions();
+        let larger_dim = width.max(height);
+
+        // Already within bounds
+        if larger_dim <= max_dim {
+            return Ok(self);
+        }
+
+        // Calculate scale factor to fit within max_dim
+        let scale_factor = max_dim as f32 / larger_dim as f32;
+
+        let new_width = ((width as f32) * scale_factor).round() as u32;
+        let new_height = ((height as f32) * scale_factor).round() as u32;
+
+        // Ensure at least 1x1
+        let new_width = new_width.max(1);
+        let new_height = new_height.max(1);
+
+        let scaled =
+            self.inner
+                .resize(new_width, new_height, image::imageops::FilterType::Lanczos3);
+
+        Ok(Self::new(scaled))
+    }
+
     /// Crops the image to the specified region
     ///
     /// The region must be within the image bounds, otherwise an error is

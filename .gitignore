@@ -43,4 +43,5 @@ tracing-*.json
 # CI/CD
 .github/workflows/*.log
 
-**/test_output/**
+**/test_output/
+test_output/

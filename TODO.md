@@ -197,6 +197,179 @@
 
 ---
 
+### Architectural Improvements (Post-M6)
+
+**Target:** When bandwidth allows
+**Priority:** Nice-to-have (not blocking releases)
+**Added:** 2025-12-15 (from code review retrospective)
+
+#### A1: Capability-Based Backend Traits
+
+**Problem:** The current `CaptureFacade` trait is a "mega-trait" that forces all backends to implement methods they can't meaningfully support. For example, Wayland cannot enumerate windows (security model limitation), but it must implement `list_windows()` which returns fake "primed source" entries.
+
+**Current Design:**
+```rust
+#[async_trait]
+pub trait CaptureFacade: Send + Sync {
+    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>>;
+    async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle>;
+    async fn capture_window(&self, handle: WindowHandle, opts: &CaptureOptions) -> CaptureResult<ImageBuffer>;
+    async fn capture_display(&self, display_id: Option<u32>, opts: &CaptureOptions) -> CaptureResult<ImageBuffer>;
+    fn capabilities(&self) -> Capabilities;
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+```
+
+**Proposed Design:**
+```rust
+// Composable capability traits
+#[async_trait]
+pub trait WindowEnumerator: Send + Sync {
+    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>>;
+}
+
+#[async_trait]
+pub trait WindowResolver: Send + Sync {
+    async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle>;
+}
+
+#[async_trait]
+pub trait ScreenCapture: Send + Sync {
+    async fn capture(&self, target: CaptureTarget, opts: &CaptureOptions) -> CaptureResult<ImageBuffer>;
+}
+
+// Backends implement only what they support
+struct WaylandBackend;  // implements ScreenCapture only
+struct X11Backend;      // implements WindowEnumerator + WindowResolver + ScreenCapture
+struct WindowsBackend;  // implements WindowEnumerator + WindowResolver + ScreenCapture
+```
+
+**Implementation Steps:**
+
+1. **Phase 1: Define new traits** (non-breaking)
+   - [ ] Create `WindowEnumerator`, `WindowResolver`, `ScreenCapture` traits in `capture/traits.rs`
+   - [ ] Add blanket impls so existing `CaptureFacade` implementors auto-implement new traits
+   - [ ] Add tests for trait composition
+
+2. **Phase 2: Update backends** (non-breaking)
+   - [ ] Add explicit trait impls to `WindowsBackend`, `X11Backend`, `WaylandBackend`
+   - [ ] Remove fake `list_windows()` from `WaylandBackend` (return error instead)
+   - [ ] Update `LinuxAutoBackend` to check capabilities before delegating
+
+3. **Phase 3: Update MCP handlers** (breaking)
+   - [ ] Update `list_windows` tool to check if backend implements `WindowEnumerator`
+   - [ ] Return appropriate error for Wayland-only sessions
+   - [ ] Update tool schemas to document capability requirements
+
+4. **Phase 4: Deprecate `CaptureFacade`**
+   - [ ] Mark `CaptureFacade` as `#[deprecated]`
+   - [ ] Update all consumers to use capability traits
+   - [ ] Remove in next major version
+
+**Files to Modify:**
+- `crates/screenshot-core/src/capture/mod.rs` (new traits)
+- `crates/screenshot-core/src/capture/wayland_backend.rs`
+- `crates/screenshot-core/src/capture/x11_backend.rs`
+- `crates/screenshot-core/src/capture/windows_backend.rs`
+- `crates/screenshot-mcp-server/src/mcp.rs`
+
+**Breaking Changes:** Yes (Phase 3+)
+**Estimated Effort:** 2-3 days
+
+---
+
+#### A2: MCP Streaming Support for Large Images
+
+**Problem:** Large screenshots (4K displays, multi-monitor captures) can produce 10+ MB of encoded image data. The current implementation loads the entire image into memory and returns it as a single base64 blob, which can cause:
+- Memory pressure on both server and client
+- Timeout issues for slow connections
+- Poor UX when waiting for large transfers
+
+**Current Design:**
+```rust
+// capture_window returns entire image in memory
+let image = backend.capture_window(handle, &opts).await?;
+let encoded = encode_image(&image, format, quality)?;
+let base64 = base64::encode(&encoded);
+Ok(CallToolResult::success(vec![Content::image(base64, mime_type)]))
+```
+
+**Proposed Design:**
+
+1. **File-based response for large images:**
+```rust
+// For images > 1MB, write to temp file and return path
+if encoded.len() > 1_048_576 {
+    let temp_path = temp_files.write_image(&encoded, format)?;
+    Ok(CallToolResult::success(vec![
+        Content::resource(ResourceLink {
+            uri: format!("file://{}", temp_path.display()),
+            mime_type: Some(mime_type.to_string()),
+            ..Default::default()
+        })
+    ]))
+} else {
+    // Small images: inline base64
+    Ok(CallToolResult::success(vec![Content::image(base64, mime_type)]))
+}
+```
+
+2. **Progressive JPEG option:**
+```rust
+// Add progressive encoding for bandwidth-constrained scenarios
+pub struct CaptureOptions {
+    // ... existing fields
+    pub progressive: bool,  // Use progressive JPEG encoding
+}
+```
+
+3. **Capture-to-file tool:**
+```rust
+#[tool(description = "Capture window and save to file (no base64 overhead)")]
+pub async fn capture_window_to_file(
+    &self,
+    params: CaptureWindowToFileParams,
+) -> Result<CallToolResult, McpError> {
+    // Returns only file path, not image data
+}
+```
+
+**Implementation Steps:**
+
+1. **Phase 1: Add file-based fallback**
+   - [ ] Add size threshold constant (`INLINE_IMAGE_MAX_BYTES = 1_048_576`)
+   - [ ] Update `build_capture_result()` to check encoded size
+   - [ ] Return `ResourceLink` for large images
+   - [ ] Add temp file cleanup on session end
+
+2. **Phase 2: Add capture_to_file tool**
+   - [ ] Create `CaptureWindowToFileParams` struct
+   - [ ] Implement `capture_window_to_file` tool handler
+   - [ ] Return structured response with file path and metadata
+   - [ ] Add tool to schema
+
+3. **Phase 3: Progressive encoding**
+   - [ ] Add `progressive` field to `CaptureOptions`
+   - [ ] Update JPEG encoder to support progressive mode
+   - [ ] Add tests for progressive encoding
+   - [ ] Document tradeoffs (faster perceived load, slightly larger file)
+
+4. **Phase 4: MCP streaming (if rmcp supports it)**
+   - [ ] Investigate rmcp streaming capabilities
+   - [ ] Implement chunked transfer if available
+   - [ ] Add progress reporting for large captures
+
+**Files to Modify:**
+- `crates/screenshot-mcp-server/src/mcp_content.rs` (size-based routing)
+- `crates/screenshot-mcp-server/src/mcp.rs` (new tool)
+- `crates/screenshot-core/src/model.rs` (progressive option)
+- `crates/screenshot-core/src/util/encode.rs` (progressive JPEG)
+
+**Breaking Changes:** No (additive)
+**Estimated Effort:** 2-3 days
+
+---
+
 ## Cross-Cutting Tasks
 
 ### Code Quality
@@ -248,6 +421,10 @@
 - No per-window alpha channel (EWMH limitation)
 - No hardware acceleration (software-based)
 - No multi-display indexing (future enhancement)
+
+### Windows (M4)
+
+- **Test exit code 0xe06d7363**: Windows C++ exception during test cleanup. All 297 tests pass but the test harness process crashes on teardown with exit code `0xe06d7363` (Windows SEH exception). This appears to be a cleanup/teardown issue in the Windows Graphics Capture API or FFI layer, not a functional bug. Needs further investigation - likely related to COM object release order or WGC frame pool disposal.
 
 ### Not Yet Implemented
 
@@ -320,15 +497,27 @@
    - [x] Release: Automation + Checksums
    - [x] Install scripts
 
-2. **Immediate:** M5 macOS backend
+2. **Completed:** Code quality improvements from retrospective ✅
+   - [x] Feature-gated integration tests (CI stability)
+   - [x] Global LRU regex cache (memory efficiency)
+   - [x] Environment variable timeout overrides (configurability)
+   - [x] XDG_STATE_HOME for machine keys (XDG compliance)
+   - [x] Structured error hints (LLM auto-recovery)
+   - [x] Tracing instrumentation (observability)
+
+3. **Immediate:** M5 macOS backend
    - Research ScreenCaptureKit API and TCC flows
    - Create macOS test plan
    - Implement backend when macOS env is ready
 
-3. **Deferred:** M6b macOS CI + packaging
+4. **Deferred:** M6b macOS CI + packaging
+
+5. **Future:** Architectural improvements (A1, A2)
+   - A1: Capability-based backend traits (cleaner abstraction)
+   - A2: MCP streaming for large images (performance)
 
 ---
 
-**Document Version:** 3.0 (M6a Complete)
-**Last Updated:** 2025-12-14
+**Document Version:** 3.1 (Code Quality Improvements)
+**Last Updated:** 2025-12-15
 **Next Review:** When M5 complete

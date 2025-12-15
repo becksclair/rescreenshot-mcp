@@ -539,14 +539,15 @@ impl ScreenshotMcpServer {
             ));
         }
 
-        // Use default capture options (PNG, quality 80, scale 1.0, no cursor)
+        // Use agent-friendly capture options (WebP, quality 80, scale 1.0, max 1920px)
         let mut opts = CaptureOptions {
-            format: ImageFormat::Png,
+            format: ImageFormat::Webp,
             quality: 80,
             scale: 1.0,
             include_cursor: false,
             region: None,
             wayland_source: None,
+            max_dimension: Some(1920), // Auto-scale 4K to ~1080p for efficient transfer
         };
         opts.validate();
 
@@ -939,5 +940,218 @@ mod tests {
         assert!(metadata.text.contains("dimensions"), "should have dimensions");
         assert!(metadata.text.contains("png"), "should specify PNG format");
         assert!(metadata.text.contains("size_bytes"), "should include file size");
+    }
+
+    // ========== Error Path Tests for MCP Error Code Mapping ==========
+    //
+    // These tests verify that each CaptureError variant is correctly mapped
+    // to the appropriate MCP error code (invalid_params vs internal_error).
+
+    mod error_mapping_tests {
+        use super::*;
+        use rmcp::model::ErrorCode;
+        use screenshot_core::model::{BackendType, WindowSelector};
+
+        /// Standard JSON-RPC invalid params code
+        const INVALID_PARAMS_CODE: i32 = -32602;
+        /// Standard JSON-RPC internal error code
+        const INTERNAL_ERROR_CODE: i32 = -32603;
+
+        /// Helper to check if an MCP error is an invalid_params error
+        fn is_invalid_params(error: &McpError) -> bool {
+            error.code == ErrorCode(INVALID_PARAMS_CODE)
+        }
+
+        /// Helper to check if an MCP error is an internal_error
+        fn is_internal_error(error: &McpError) -> bool {
+            error.code == ErrorCode(INTERNAL_ERROR_CODE)
+        }
+
+        #[test]
+        fn test_window_not_found_maps_to_invalid_params() {
+            let error = CaptureError::WindowNotFound {
+                selector: WindowSelector::by_title("NonExistent"),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_invalid_params(&mcp_error), "WindowNotFound should be invalid_params");
+            assert!(
+                mcp_error.message.contains("not found") || mcp_error.message.contains("Window"),
+                "Error message should describe window not found"
+            );
+        }
+
+        #[test]
+        fn test_invalid_parameter_maps_to_invalid_params() {
+            let error = CaptureError::InvalidParameter {
+                parameter: "scale".to_string(),
+                reason: "must be between 0.1 and 2.0".to_string(),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_invalid_params(&mcp_error), "InvalidParameter should be invalid_params");
+            assert!(
+                mcp_error.message.contains("scale"),
+                "Error message should mention the parameter"
+            );
+            assert!(mcp_error.message.contains("0.1"), "Error message should include reason");
+        }
+
+        #[test]
+        fn test_token_not_found_maps_to_invalid_params() {
+            let error = CaptureError::TokenNotFound {
+                source_id: "wayland-default".to_string(),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_invalid_params(&mcp_error), "TokenNotFound should be invalid_params");
+            assert!(
+                mcp_error.message.contains("wayland-default"),
+                "Error message should include source_id"
+            );
+        }
+
+        #[test]
+        fn test_window_closed_maps_to_invalid_params() {
+            let error = CaptureError::WindowClosed;
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_invalid_params(&mcp_error), "WindowClosed should be invalid_params");
+        }
+
+        #[test]
+        fn test_portal_unavailable_maps_to_internal_error() {
+            let error = CaptureError::PortalUnavailable {
+                portal: "org.freedesktop.portal.ScreenCast".to_string(),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "PortalUnavailable should be internal_error");
+            assert!(
+                mcp_error.message.contains("portal") || mcp_error.message.contains("Portal"),
+                "Error message should mention portal"
+            );
+        }
+
+        #[test]
+        fn test_permission_denied_maps_to_internal_error() {
+            let error = CaptureError::PermissionDenied {
+                platform: "linux".to_string(),
+                backend: BackendType::Wayland,
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "PermissionDenied should be internal_error");
+        }
+
+        #[test]
+        fn test_encoding_failed_maps_to_internal_error() {
+            let error = CaptureError::EncodingFailed {
+                format: "png".to_string(),
+                reason: "invalid image dimensions".to_string(),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "EncodingFailed should be internal_error");
+        }
+
+        #[test]
+        fn test_capture_timeout_maps_to_internal_error() {
+            let error = CaptureError::CaptureTimeout { duration_ms: 5000 };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "CaptureTimeout should be internal_error");
+        }
+
+        #[test]
+        fn test_backend_not_available_maps_to_internal_error() {
+            let error = CaptureError::BackendNotAvailable {
+                backend: BackendType::Wayland,
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "BackendNotAvailable should be internal_error");
+        }
+
+        #[test]
+        fn test_io_error_maps_to_internal_error() {
+            let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+            let error = CaptureError::IoError(io_error);
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "IoError should be internal_error");
+        }
+
+        #[test]
+        fn test_image_error_maps_to_internal_error() {
+            let error = CaptureError::ImageError("corrupt PNG data".to_string());
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "ImageError should be internal_error");
+        }
+
+        #[test]
+        fn test_keyring_unavailable_maps_to_internal_error() {
+            let error = CaptureError::KeyringUnavailable {
+                reason: "no Secret Service daemon".to_string(),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "KeyringUnavailable should be internal_error");
+        }
+
+        #[test]
+        fn test_keyring_operation_failed_maps_to_internal_error() {
+            let error = CaptureError::KeyringOperationFailed {
+                operation: "store".to_string(),
+                reason: "access denied".to_string(),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(
+                is_internal_error(&mcp_error),
+                "KeyringOperationFailed should be internal_error"
+            );
+        }
+
+        #[test]
+        fn test_encryption_failed_maps_to_internal_error() {
+            let error = CaptureError::EncryptionFailed {
+                reason: "key derivation failed".to_string(),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(is_internal_error(&mcp_error), "EncryptionFailed should be internal_error");
+        }
+
+        #[test]
+        fn test_unsupported_windows_version_maps_to_internal_error() {
+            let error = CaptureError::UnsupportedWindowsVersion {
+                current_build: 15063,
+                minimum_build: 17134,
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            assert!(
+                is_internal_error(&mcp_error),
+                "UnsupportedWindowsVersion should be internal_error"
+            );
+        }
+
+        // Verify error message content is preserved
+        #[test]
+        fn test_error_message_content_preserved() {
+            let error = CaptureError::WindowNotFound {
+                selector: WindowSelector::by_title("MyCustomWindow"),
+            };
+            let mcp_error = convert_capture_error_to_mcp(error);
+
+            // Error message should contain the selector info
+            assert!(
+                mcp_error.message.contains("MyCustomWindow")
+                    || mcp_error.message.contains("not found"),
+                "Error message should preserve error details"
+            );
+        }
     }
 }

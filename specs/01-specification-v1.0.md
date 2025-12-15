@@ -411,7 +411,7 @@ All captures support configurable encoding:
 
 ### Requirements
 
-- **Rust:** 1.75+ (tested on 1.92.0-nightly)
+- **Rust:** 1.85+ (tested on 1.92.0-nightly)
 - **Linux:** Build tools (gcc, make, pkg-config)
 - **Wayland:** libwayland, libportal, libsecret, pipewire
 - **X11:** libx11, libxcb

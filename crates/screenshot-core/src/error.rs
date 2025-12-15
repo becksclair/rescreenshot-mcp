@@ -3,11 +3,89 @@
 //! This module defines comprehensive error types with user-facing messages
 //! and actionable remediation hints. Each error provides context about what
 //! went wrong and suggests next steps for resolution.
+//!
+//! # Structured Error Hints
+//!
+//! In addition to human-readable remediation hints, errors provide structured
+//! metadata via [`ErrorHint`] for LLM auto-recovery. This allows AI clients
+//! to automatically attempt recovery actions without parsing prose.
+//!
+//! ```rust,ignore
+//! let error = CaptureError::WindowNotFound { selector };
+//! let hint = error.structured_hint();
+//!
+//! if let Some(tool) = hint.suggested_tool {
+//!     // LLM can automatically call the suggested tool
+//!     println!("Try calling: {}", tool);
+//! }
+//! ```
 
 use crate::model::{BackendType, WindowSelector};
+use serde::{Deserialize, Serialize};
 
 /// Result type alias for capture operations
 pub type CaptureResult<T> = Result<T, CaptureError>;
+
+/// Structured error hint for LLM auto-recovery.
+///
+/// Contains machine-parseable metadata that allows AI clients to automatically
+/// attempt recovery actions without parsing prose remediation text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorHint {
+    /// Human-readable description of the error and how to fix it
+    pub message: String,
+
+    /// Category of recovery action to attempt
+    pub recovery_action: RecoveryAction,
+
+    /// MCP tool name to call for recovery (if applicable)
+    pub suggested_tool: Option<String>,
+
+    /// Parameters to pass to the suggested tool
+    pub tool_params: Option<serde_json::Value>,
+
+    /// Whether the error is likely transient (retry may succeed)
+    pub is_transient: bool,
+
+    /// Error category for grouping/filtering
+    pub category: ErrorCategory,
+}
+
+/// Category of recovery action an LLM client can attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    /// Call a different tool to get more information
+    CallTool,
+    /// Retry the same operation (possibly with different parameters)
+    Retry,
+    /// Modify parameters and retry
+    ModifyParams,
+    /// Require user intervention (permission grant, etc.)
+    RequireUser,
+    /// No automated recovery possible
+    None,
+}
+
+/// High-level error category for filtering and grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCategory {
+    /// Target not found (window, display, etc.)
+    NotFound,
+    /// Permission or access denied
+    PermissionDenied,
+    /// Invalid parameters or configuration
+    InvalidInput,
+    /// Backend or platform not available
+    Unavailable,
+    /// Operation timed out
+    Timeout,
+    /// I/O or system error
+    SystemError,
+    /// Encoding or processing error
+    ProcessingError,
+}
 
 /// Comprehensive error type for screenshot capture operations
 ///
@@ -261,6 +339,203 @@ impl CaptureError {
                 "The target window was closed or destroyed while attempting capture. Ensure the \
                  window remains open during capture, or use display capture as an alternative."
             }
+        }
+    }
+
+    /// Returns a structured error hint for LLM auto-recovery.
+    ///
+    /// Unlike `remediation_hint()` which returns prose, this method returns
+    /// machine-parseable metadata that AI clients can use to automatically
+    /// attempt recovery actions.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use screenshot_core::{
+    ///     error::{CaptureError, RecoveryAction},
+    ///     model::WindowSelector,
+    /// };
+    ///
+    /// let error = CaptureError::WindowNotFound {
+    ///     selector: WindowSelector::by_title("Firefox"),
+    /// };
+    ///
+    /// let hint = error.structured_hint();
+    /// assert_eq!(hint.recovery_action, RecoveryAction::CallTool);
+    /// assert_eq!(hint.suggested_tool.as_deref(), Some("list_windows"));
+    /// ```
+    pub fn structured_hint(&self) -> ErrorHint {
+        match self {
+            CaptureError::WindowNotFound { selector } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::CallTool,
+                suggested_tool: Some("list_windows".to_string()),
+                tool_params: Some(serde_json::json!({
+                    "hint": "Look for windows matching the original selector",
+                    "original_selector": format!("{:?}", selector),
+                })),
+                is_transient: false,
+                category: ErrorCategory::NotFound,
+            },
+            CaptureError::PortalUnavailable { .. } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::RequireUser,
+                suggested_tool: None,
+                tool_params: None,
+                is_transient: false,
+                category: ErrorCategory::Unavailable,
+            },
+            CaptureError::PermissionDenied { backend, .. } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: match backend {
+                    BackendType::Wayland => RecoveryAction::CallTool,
+                    _ => RecoveryAction::RequireUser,
+                },
+                suggested_tool: if *backend == BackendType::Wayland {
+                    Some("prime_wayland_consent".to_string())
+                } else {
+                    None
+                },
+                tool_params: None,
+                is_transient: false,
+                category: ErrorCategory::PermissionDenied,
+            },
+            CaptureError::EncodingFailed { format, .. } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::ModifyParams,
+                suggested_tool: None,
+                tool_params: Some(serde_json::json!({
+                    "suggestion": "Try a different format",
+                    "failed_format": format,
+                    "alternatives": match format.as_str() {
+                        "webp" => vec!["png", "jpeg"],
+                        "jpeg" | "jpg" => vec!["png", "webp"],
+                        _ => vec!["png", "jpeg", "webp"],
+                    },
+                })),
+                is_transient: false,
+                category: ErrorCategory::ProcessingError,
+            },
+            CaptureError::CaptureTimeout { duration_ms } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::Retry,
+                suggested_tool: None,
+                tool_params: Some(serde_json::json!({
+                    "suggestion": "Increase timeout or retry",
+                    "original_timeout_ms": duration_ms,
+                })),
+                is_transient: true,
+                category: ErrorCategory::Timeout,
+            },
+            CaptureError::InvalidParameter { parameter, reason } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::ModifyParams,
+                suggested_tool: None,
+                tool_params: Some(serde_json::json!({
+                    "invalid_parameter": parameter,
+                    "reason": reason,
+                    "valid_ranges": match parameter.as_str() {
+                        "quality" => serde_json::json!({"min": 0, "max": 100}),
+                        "scale" => serde_json::json!({"min": 0.1, "max": 2.0}),
+                        _ => serde_json::json!(null),
+                    },
+                })),
+                is_transient: false,
+                category: ErrorCategory::InvalidInput,
+            },
+            CaptureError::BackendNotAvailable { backend } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::None,
+                suggested_tool: None,
+                tool_params: Some(serde_json::json!({
+                    "unavailable_backend": format!("{:?}", backend),
+                })),
+                is_transient: false,
+                category: ErrorCategory::Unavailable,
+            },
+            CaptureError::IoError(_) => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::Retry,
+                suggested_tool: None,
+                tool_params: None,
+                is_transient: true,
+                category: ErrorCategory::SystemError,
+            },
+            CaptureError::ImageError(_) => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::None,
+                suggested_tool: None,
+                tool_params: None,
+                is_transient: false,
+                category: ErrorCategory::ProcessingError,
+            },
+            CaptureError::KeyringUnavailable { .. } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::RequireUser,
+                suggested_tool: None,
+                tool_params: Some(serde_json::json!({
+                    "suggestion": "Enable file-token-fallback feature for headless operation",
+                })),
+                is_transient: false,
+                category: ErrorCategory::Unavailable,
+            },
+            CaptureError::KeyringOperationFailed { operation, .. } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::Retry,
+                suggested_tool: None,
+                tool_params: Some(serde_json::json!({
+                    "failed_operation": operation,
+                })),
+                is_transient: true,
+                category: ErrorCategory::SystemError,
+            },
+            CaptureError::TokenNotFound { source_id } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::CallTool,
+                suggested_tool: Some("prime_wayland_consent".to_string()),
+                tool_params: Some(serde_json::json!({
+                    "source_id": source_id,
+                    "hint": "Run prime_wayland_consent to obtain a token first",
+                })),
+                is_transient: false,
+                category: ErrorCategory::NotFound,
+            },
+            CaptureError::EncryptionFailed { .. } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::CallTool,
+                suggested_tool: Some("prime_wayland_consent".to_string()),
+                tool_params: Some(serde_json::json!({
+                    "hint": "Re-run prime_wayland_consent to regenerate tokens",
+                })),
+                is_transient: false,
+                category: ErrorCategory::SystemError,
+            },
+            CaptureError::UnsupportedWindowsVersion {
+                current_build,
+                minimum_build,
+            } => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::None,
+                suggested_tool: None,
+                tool_params: Some(serde_json::json!({
+                    "current_build": current_build,
+                    "minimum_build": minimum_build,
+                    "suggestion": "Windows update required",
+                })),
+                is_transient: false,
+                category: ErrorCategory::Unavailable,
+            },
+            CaptureError::WindowClosed => ErrorHint {
+                message: self.remediation_hint().to_string(),
+                recovery_action: RecoveryAction::CallTool,
+                suggested_tool: Some("capture_display".to_string()),
+                tool_params: Some(serde_json::json!({
+                    "hint": "Use display capture as fallback, or call list_windows to find another target",
+                    "alternative_tools": ["capture_display", "list_windows"],
+                })),
+                is_transient: true,
+                category: ErrorCategory::NotFound,
+            },
         }
     }
 }
@@ -520,5 +795,117 @@ mod tests {
         let hint = error.remediation_hint();
         assert!(hint.contains("closed or destroyed"));
         assert!(hint.contains("display capture"));
+    }
+
+    // ========== Structured Hint Tests ==========
+
+    #[test]
+    fn test_structured_hint_window_not_found() {
+        let error = CaptureError::WindowNotFound {
+            selector: WindowSelector::by_title("Firefox"),
+        };
+
+        let hint = error.structured_hint();
+        assert_eq!(hint.recovery_action, RecoveryAction::CallTool);
+        assert_eq!(hint.suggested_tool.as_deref(), Some("list_windows"));
+        assert!(!hint.is_transient);
+        assert_eq!(hint.category, ErrorCategory::NotFound);
+        assert!(hint.tool_params.is_some());
+    }
+
+    #[test]
+    fn test_structured_hint_permission_denied_wayland() {
+        let error = CaptureError::PermissionDenied {
+            platform: "linux".to_string(),
+            backend: BackendType::Wayland,
+        };
+
+        let hint = error.structured_hint();
+        assert_eq!(hint.recovery_action, RecoveryAction::CallTool);
+        assert_eq!(hint.suggested_tool.as_deref(), Some("prime_wayland_consent"));
+        assert_eq!(hint.category, ErrorCategory::PermissionDenied);
+    }
+
+    #[test]
+    fn test_structured_hint_permission_denied_windows() {
+        let error = CaptureError::PermissionDenied {
+            platform: "windows".to_string(),
+            backend: BackendType::Windows,
+        };
+
+        let hint = error.structured_hint();
+        assert_eq!(hint.recovery_action, RecoveryAction::RequireUser);
+        assert!(hint.suggested_tool.is_none());
+        assert_eq!(hint.category, ErrorCategory::PermissionDenied);
+    }
+
+    #[test]
+    fn test_structured_hint_capture_timeout() {
+        let error = CaptureError::CaptureTimeout { duration_ms: 5000 };
+
+        let hint = error.structured_hint();
+        assert_eq!(hint.recovery_action, RecoveryAction::Retry);
+        assert!(hint.is_transient);
+        assert_eq!(hint.category, ErrorCategory::Timeout);
+    }
+
+    #[test]
+    fn test_structured_hint_invalid_parameter() {
+        let error = CaptureError::InvalidParameter {
+            parameter: "quality".to_string(),
+            reason: "value exceeds max".to_string(),
+        };
+
+        let hint = error.structured_hint();
+        assert_eq!(hint.recovery_action, RecoveryAction::ModifyParams);
+        assert_eq!(hint.category, ErrorCategory::InvalidInput);
+        assert!(hint.tool_params.is_some());
+
+        // Check that valid_ranges is included
+        let params = hint.tool_params.unwrap();
+        assert!(params.get("valid_ranges").is_some());
+    }
+
+    #[test]
+    fn test_structured_hint_encoding_failed() {
+        let error = CaptureError::EncodingFailed {
+            format: "webp".to_string(),
+            reason: "encoder error".to_string(),
+        };
+
+        let hint = error.structured_hint();
+        assert_eq!(hint.recovery_action, RecoveryAction::ModifyParams);
+        assert_eq!(hint.category, ErrorCategory::ProcessingError);
+
+        // Check alternatives are provided
+        let params = hint.tool_params.unwrap();
+        let alternatives = params.get("alternatives").unwrap().as_array().unwrap();
+        assert!(alternatives.contains(&serde_json::json!("png")));
+    }
+
+    #[test]
+    fn test_structured_hint_window_closed() {
+        let error = CaptureError::WindowClosed;
+
+        let hint = error.structured_hint();
+        assert_eq!(hint.recovery_action, RecoveryAction::CallTool);
+        assert_eq!(hint.suggested_tool.as_deref(), Some("capture_display"));
+        assert!(hint.is_transient);
+        assert_eq!(hint.category, ErrorCategory::NotFound);
+    }
+
+    #[test]
+    fn test_structured_hint_serialization() {
+        let error = CaptureError::WindowNotFound {
+            selector: WindowSelector::by_title("Test"),
+        };
+
+        let hint = error.structured_hint();
+        let json = serde_json::to_string(&hint).unwrap();
+
+        // Verify it serializes correctly
+        assert!(json.contains("list_windows"));
+        assert!(json.contains("call_tool")); // snake_case from serde rename
+        assert!(json.contains("not_found")); // snake_case from serde rename
     }
 }

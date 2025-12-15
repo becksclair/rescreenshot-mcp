@@ -45,15 +45,18 @@ impl std::fmt::Display for BackendType {
 }
 
 /// Image format for encoded screenshots
+///
+/// Default is WebP, which provides excellent compression while maintaining
+/// legibility for AI agent verification of desktop applications.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageFormat {
-    /// PNG format (lossless, larger file size)
-    #[default]
+    /// PNG format (lossless, larger file size - use for pixel-perfect needs)
     Png,
-    /// WebP format (lossy/lossless, good compression)
+    /// WebP format (lossy, excellent compression - recommended for agent use)
+    #[default]
     Webp,
-    /// JPEG format (lossy, smallest file size)
+    /// JPEG format (lossy, good compression but no transparency)
     Jpeg,
 }
 
@@ -601,10 +604,11 @@ impl Default for Capabilities {
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CaptureOptions {
-    /// Output image format
+    /// Output image format (default: WebP for good compression)
     #[serde(default)]
     pub format: ImageFormat,
     /// JPEG/WebP quality (0-100, clamped if out of range)
+    /// Default: 80 - good balance of quality and file size
     #[serde(default = "default_quality")]
     pub quality: u8,
     /// Scale factor for output image (0.1-2.0, clamped if out of range)
@@ -619,6 +623,12 @@ pub struct CaptureOptions {
     /// Wayland-specific source (for restore tokens, M2)
     #[serde(default)]
     pub wayland_source: Option<WaylandSource>,
+    /// Maximum dimension (width or height) for the output image.
+    /// Images larger than this will be downscaled proportionally.
+    /// Default: 1920 - ensures 4K images become ~1080p for efficient transfer.
+    /// Set to 0 or None to disable auto-scaling.
+    #[serde(default = "default_max_dimension")]
+    pub max_dimension: Option<u32>,
 }
 
 fn default_quality() -> u8 {
@@ -627,6 +637,10 @@ fn default_quality() -> u8 {
 
 fn default_scale() -> f32 {
     1.0
+}
+
+fn default_max_dimension() -> Option<u32> {
+    Some(1920)
 }
 
 impl CaptureOptions {
@@ -656,6 +670,7 @@ impl Default for CaptureOptions {
             include_cursor: false,
             region: None,
             wayland_source: None,
+            max_dimension: default_max_dimension(),
         }
     }
 }
@@ -700,6 +715,21 @@ impl CaptureOptionsBuilder {
     /// Sets the Wayland source
     pub fn wayland_source(mut self, source: WaylandSource) -> Self {
         self.options.wayland_source = Some(source);
+        self
+    }
+
+    /// Sets the maximum dimension for auto-scaling
+    ///
+    /// Images larger than this (in either width or height) will be
+    /// proportionally downscaled. Use `None` to disable auto-scaling.
+    pub fn max_dimension(mut self, max: Option<u32>) -> Self {
+        self.options.max_dimension = max;
+        self
+    }
+
+    /// Disables auto-scaling (returns full resolution image)
+    pub fn full_resolution(mut self) -> Self {
+        self.options.max_dimension = None;
         self
     }
 
@@ -912,7 +942,8 @@ mod tests {
 
     #[test]
     fn test_image_format_default() {
-        assert_eq!(ImageFormat::default(), ImageFormat::Png);
+        // WebP is default for efficient agent verification
+        assert_eq!(ImageFormat::default(), ImageFormat::Webp);
     }
 
     // ========== M2 Phase 2 Tests: Wayland Types ==========
@@ -1276,12 +1307,15 @@ mod tests {
     #[test]
     fn test_capture_options_default() {
         let opts = CaptureOptions::default();
-        assert_eq!(opts.format, ImageFormat::Png);
+        // WebP is the default format for efficient agent verification
+        assert_eq!(opts.format, ImageFormat::Webp);
         assert_eq!(opts.quality, 80);
         assert_eq!(opts.scale, 1.0);
         assert!(!opts.include_cursor);
         assert_eq!(opts.region, None);
         assert_eq!(opts.wayland_source, None);
+        // Default max_dimension of 1920 ensures 4K images become ~1080p
+        assert_eq!(opts.max_dimension, Some(1920));
     }
 
     #[test]
@@ -1293,6 +1327,7 @@ mod tests {
             include_cursor: false,
             region: None,
             wayland_source: None,
+            max_dimension: None,
         };
         opts.validate();
         assert_eq!(opts.quality, 100);
@@ -1311,6 +1346,7 @@ mod tests {
             include_cursor: false,
             region: None,
             wayland_source: None,
+            max_dimension: None,
         };
         opts.validate();
         assert_eq!(opts.scale, 2.0);
@@ -1354,6 +1390,7 @@ mod tests {
             include_cursor: true,
             region: Some(Region::new(10, 20, 640, 480)),
             wayland_source: None,
+            max_dimension: Some(1920),
         };
 
         let json = serde_json::to_value(&opts).unwrap();
@@ -1368,10 +1405,12 @@ mod tests {
     fn test_capture_options_deserialization_with_defaults() {
         let json = r#"{}"#;
         let opts: CaptureOptions = serde_json::from_str(json).unwrap();
-        assert_eq!(opts.format, ImageFormat::Png);
+        // WebP is default for agent-friendly output
+        assert_eq!(opts.format, ImageFormat::Webp);
         assert_eq!(opts.quality, 80);
         assert_eq!(opts.scale, 1.0);
         assert!(!opts.include_cursor);
+        assert_eq!(opts.max_dimension, Some(1920));
     }
 
     #[test]

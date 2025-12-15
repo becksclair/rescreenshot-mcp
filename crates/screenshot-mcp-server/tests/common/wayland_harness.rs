@@ -16,7 +16,7 @@ use std::time::Duration;
 // Re-export performance utilities from the main library
 // These are always available during testing since perf module has #[cfg(any(feature =
 // "perf-tests", test))]
-#[cfg(any(feature = "perf-tests", test))]
+#[cfg(test)]
 #[allow(unused_imports)]
 pub use screenshot_core::perf::{PerformanceThresholds, measure_operation, print_timing_result};
 #[cfg(target_os = "linux")]

@@ -157,9 +157,12 @@ pub fn find_best_target_window(windows: &[WindowInfo]) -> Option<&WindowInfo> {
     }
 
     // Fallback: first window
-    windows.first().inspect(|w| {
+    if let Some(w) = windows.first() {
         println!("[TARGET] Fallback to first: '{}' ({})", w.title, w.owner);
-    })
+        Some(w)
+    } else {
+        None
+    }
 }
 
 /// Measure the duration of an async operation
