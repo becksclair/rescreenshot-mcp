@@ -38,15 +38,13 @@
 
 #![cfg(target_os = "windows")]
 
-mod common;
-
-// Import common helpers
-use common::windows_helpers::{
-    WindowsTestContext, measure_timing, save_test_image, validate_image_pixels,
-};
+// Import shared test utilities from screenshot-test-utils crate
 use screenshot_core::{
     capture::{ScreenCapture, WindowEnumerator, WindowResolver, windows_backend::WindowsBackend},
     model::{CaptureOptions, Region, WindowSelector},
+};
+use screenshot_test_utils::windows::{
+    WindowsTestContext, measure_timing, save_test_image, validate_image_pixels,
 };
 
 /// Test that we can enumerate windows on the system

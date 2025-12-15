@@ -15,21 +15,12 @@
 //! - WAYLAND_DISPLAY environment variable set
 //! - PipeWire runtime available
 
-// Import shared test utilities
-mod common;
-
 #[cfg(all(test, target_os = "linux"))]
 mod wayland_error_integration {
     use std::sync::Arc;
 
-    use screenshot_core::{
-        capture::{CaptureFacade, ImageBuffer},
-        model::SourceType,
-        util::key_store::KeyStore,
-    };
-
-    // Import test harness utilities
-    use crate::common::wayland_harness::*;
+    use screenshot_core::{model::SourceType, util::key_store::KeyStore};
+    use screenshot_test_utils::wayland::*;
 
     // ========================================================================
     // E2E Error Scenario Stubs (Manual Testing)

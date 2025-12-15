@@ -1,0 +1,19 @@
+[package]
+name = "screenshot-test-utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Test utilities for screenshot-core integration tests"
+keywords = ["testing", "screenshot", "integration-tests"]
+categories = ["development-tools::testing"]
+
+[dependencies]
+# Core library (for re-exporting perf utilities and types)
+screenshot-core = { path = "../screenshot-core" }
+
+# Async runtime (for timing utilities)
+tokio.workspace = true
+futures.workspace = true

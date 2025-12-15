@@ -269,77 +269,38 @@
 
 ---
 
-#### A1.5: Consolidate Test Infrastructure 📅 PLANNED
+#### A1.5: Consolidate Test Infrastructure ✅ COMPLETE
 
-**Status:** Planned (deferred from v0.6.0 release)
+**Status:** Complete
 **Priority:** Low (quality-of-life improvement)
-**Estimated Effort:** 1-2 days
 
-**Problem:** Test helper code is duplicated across multiple locations:
-- `tests/common/` (workspace root)
-- `crates/screenshot-core/tests/common/`
-- `crates/screenshot-mcp-server/tests/common/`
+**Problem Solved:** Test helper code was duplicated across 3 locations (12+ files).
 
-This causes:
-- Confusing for contributors (which helpers to use?)
-- Duplicated code maintenance
-- Inconsistent patterns across test files
+**Solution Implemented:**
+- Created `crates/screenshot-test-utils/` as a dedicated test utilities crate
+- Modules: `windows.rs`, `wayland.rs`, `timing.rs` with platform-gated exports
+- Kept MCP-specific `mcp_harness.rs` in server crate's tests/common/
+- Deleted all duplicate workspace-level tests (they were duplicates of crate tests)
+- Updated test imports to use `screenshot_test_utils::*`
 
-**Solution:** Create a `testutil` module in `screenshot-core` that can be shared.
+**Files Created:**
+- `crates/screenshot-test-utils/Cargo.toml`
+- `crates/screenshot-test-utils/src/lib.rs`
+- `crates/screenshot-test-utils/src/windows.rs`
+- `crates/screenshot-test-utils/src/wayland.rs`
+- `crates/screenshot-test-utils/src/timing.rs`
 
-**Implementation Steps:**
+**Files Deleted:**
+- `tests/` (entire workspace-level test directory - was duplicate)
+- `crates/screenshot-core/tests/common/` (migrated to src/testutil/)
+- `crates/screenshot-mcp-server/tests/common/windows_helpers.rs`
+- `crates/screenshot-mcp-server/tests/common/wayland_harness.rs`
 
-1. **Create testutil module in screenshot-core**
-   ```rust
-   // crates/screenshot-core/src/testutil/mod.rs
-   #[cfg(any(test, feature = "testutil"))]
-   pub mod windows_helpers;
-   #[cfg(any(test, feature = "testutil"))]
-   pub mod wayland_harness;
-   #[cfg(any(test, feature = "testutil"))]
-   pub mod timing;
-   ```
-
-2. **Add feature flag to Cargo.toml**
-   ```toml
-   [features]
-   testutil = []
-   ```
-
-3. **Move helper files**
-   - `tests/common/windows_helpers.rs` → `src/testutil/windows_helpers.rs`
-   - `tests/common/wayland_harness.rs` → `src/testutil/wayland_harness.rs`
-   - Keep MCP-specific harness in `screenshot-mcp-server/tests/common/`
-
-4. **Update dependent crates**
-   ```toml
-   # crates/screenshot-mcp-server/Cargo.toml
-   [dev-dependencies]
-   screenshot-core = { path = "../screenshot-core", features = ["testutil"] }
-   ```
-
-5. **Delete duplicate files**
-   - `tests/common/` (workspace root)
-   - `crates/screenshot-core/tests/common/`
-
-**Files to Create:**
-- `crates/screenshot-core/src/testutil/mod.rs`
-- `crates/screenshot-core/src/testutil/windows_helpers.rs`
-- `crates/screenshot-core/src/testutil/wayland_harness.rs`
-- `crates/screenshot-core/src/testutil/timing.rs`
-
-**Files to Delete:**
-- `tests/common/windows_helpers.rs`
-- `tests/common/wayland_harness.rs`
-- `tests/common/mod.rs`
-- `tests/common/mcp_harness.rs` (move to mcp-server)
-- `crates/screenshot-core/tests/common/*`
-
-**Success Criteria:**
-- ✅ All tests still pass
-- ✅ Single source of truth for test helpers
-- ✅ Feature-gated to avoid bloating production builds
-- ✅ Clear documentation on using testutil
+**Results:**
+- ✅ All 298+ tests pass
+- ✅ Single source of truth for test helpers (separate dev-only crate)
+- ✅ Platform-gated modules avoid cross-platform compile issues
+- ✅ Reduced duplicate code from 12+ files to 4 files
 
 **Breaking Changes:** None (internal only)
 

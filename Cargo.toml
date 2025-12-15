@@ -3,6 +3,7 @@ members = [
     "crates/screenshot-core",
     "crates/screenshot-mcp-server",
     "crates/screenshot-cli",
+    "crates/screenshot-test-utils",
 ]
 resolver = "2"
 

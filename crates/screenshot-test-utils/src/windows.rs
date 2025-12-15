@@ -1,11 +1,29 @@
-//! Shared test utilities for Windows backend integration tests
+//! Windows-specific test utilities
 //!
-//! This module provides:
-//! - `WindowsTestContext`: A fixture for cleaner test setup
-//! - `save_test_image`: Save images for visual verification
-//! - `find_best_target_window`: Smart window selection with priority fallback
-//! - `validate_image_pixels`: Pixel content validation
-//! - `measure_async`: Async-native timing measurement
+//! This module provides test fixtures and helpers for Windows backend integration tests.
+//!
+//! # Key Types
+//!
+//! - [`WindowsTestContext`]: Test fixture with pre-enumerated windows and backend
+//! - [`save_test_image`]: Save captured images for visual verification
+//! - [`validate_image_pixels`]: Verify image content is not blank/corrupted
+//! - [`find_best_target_window`]: Smart window selection with priority fallback
+//!
+//! # Example
+//!
+//! ```ignore
+//! use screenshot_test_utils::windows::{WindowsTestContext, save_test_image};
+//! use screenshot_core::model::CaptureOptions;
+//!
+//! #[tokio::test]
+//! async fn test_window_capture() {
+//!     let ctx = WindowsTestContext::new().await;
+//!     let window = ctx.find_best_window().expect("No windows available");
+//!
+//!     let image = ctx.capture_window(&window.handle, &CaptureOptions::default()).await.unwrap();
+//!     save_test_image(&image, "captured_window");
+//! }
+//! ```
 
 #![allow(dead_code)] // Helpers are available for test use, not all are always needed
 
@@ -14,8 +32,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use screenshot_mcp::{
-    capture::{CaptureFacade, ImageBuffer, windows_backend::WindowsBackend},
+use screenshot_core::{
+    capture::{ImageBuffer, ScreenCapture, WindowEnumerator, windows_backend::WindowsBackend},
+    error::CaptureResult,
     model::{CaptureOptions, WindowInfo},
 };
 
@@ -27,6 +46,15 @@ pub fn test_output_dir() -> PathBuf {
 /// Save an image to test_output/ directory for visual verification
 ///
 /// Creates the directory if needed and returns the absolute path.
+///
+/// # Example
+///
+/// ```ignore
+/// use screenshot_test_utils::windows::save_test_image;
+///
+/// let path = save_test_image(&captured_image, "my_test_capture");
+/// println!("Image saved to: {}", path.display());
+/// ```
 pub fn save_test_image(image: &ImageBuffer, name: &str) -> PathBuf {
     use std::fs;
 
@@ -48,6 +76,15 @@ pub fn save_test_image(image: &ImageBuffer, name: &str) -> PathBuf {
 }
 
 /// Validate that an image contains actual pixel data (not blank/corrupted)
+///
+/// Checks that:
+/// - Image has non-zero dimensions
+/// - Image contains some non-zero pixels
+/// - Image is not mostly empty (>5% content required)
+///
+/// # Panics
+///
+/// Panics with descriptive message if validation fails.
 pub fn validate_image_pixels(image: &ImageBuffer, name: &str) {
     let (width, height) = image.dimensions();
     let pixels = image.as_bytes();
@@ -96,6 +133,15 @@ pub fn validate_image_pixels(image: &ImageBuffer, name: &str) {
 /// 4. Browsers (Chrome, Firefox, Edge, etc.)
 /// 5. Any window with substantial title
 /// 6. First available window
+///
+/// # Example
+///
+/// ```ignore
+/// use screenshot_test_utils::windows::find_best_target_window;
+///
+/// let window = find_best_target_window(&windows).expect("No windows found");
+/// println!("Testing with: {} ({})", window.title, window.owner);
+/// ```
 pub fn find_best_target_window(windows: &[WindowInfo]) -> Option<&WindowInfo> {
     // Priority 1: Cursor editor
     if let Some(w) = windows.iter().find(|w| {
@@ -157,12 +203,27 @@ pub fn find_best_target_window(windows: &[WindowInfo]) -> Option<&WindowInfo> {
     }
 
     // Fallback: first window
-    windows.first().inspect(|w| {
+    if let Some(w) = windows.first() {
         println!("[TARGET] Fallback to first: '{}' ({})", w.title, w.owner);
-    })
+        Some(w)
+    } else {
+        None
+    }
 }
 
 /// Measure the duration of an async operation
+///
+/// For async tests, prefer this over sync timing wrappers.
+///
+/// # Example
+///
+/// ```ignore
+/// use screenshot_test_utils::windows::measure_async;
+///
+/// let (result, duration) = measure_async("capture", || async {
+///     backend.capture_window(handle, &opts).await
+/// }).await;
+/// ```
 pub async fn measure_async<F, Fut, T>(name: &str, f: F) -> (T, Duration)
 where
     F: FnOnce() -> Fut,
@@ -193,6 +254,21 @@ where
 /// Test fixture for Windows backend integration tests
 ///
 /// Provides a clean setup with pre-enumerated windows and convenience methods.
+///
+/// # Example
+///
+/// ```ignore
+/// use screenshot_test_utils::windows::WindowsTestContext;
+///
+/// #[tokio::test]
+/// async fn test_capture() {
+///     let ctx = WindowsTestContext::new().await;
+///     ctx.print_windows(5); // Show first 5 windows
+///
+///     let window = ctx.find_best_window().unwrap();
+///     let image = ctx.capture_window(&window.handle, &CaptureOptions::default()).await.unwrap();
+/// }
+/// ```
 pub struct WindowsTestContext {
     pub backend: WindowsBackend,
     pub windows: Vec<WindowInfo>,
@@ -238,15 +314,12 @@ impl WindowsTestContext {
         &self,
         handle: &str,
         opts: &CaptureOptions,
-    ) -> screenshot_mcp::error::CaptureResult<ImageBuffer> {
+    ) -> CaptureResult<ImageBuffer> {
         self.backend.capture_window(handle.to_string(), opts).await
     }
 
     /// Capture primary display with options
-    pub async fn capture_display(
-        &self,
-        opts: &CaptureOptions,
-    ) -> screenshot_mcp::error::CaptureResult<ImageBuffer> {
+    pub async fn capture_display(&self, opts: &CaptureOptions) -> CaptureResult<ImageBuffer> {
         self.backend.capture_display(None, opts).await
     }
 }

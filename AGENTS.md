@@ -20,6 +20,7 @@ cargo fmt && cargo clippy --all-targets --all-features -- -D warnings && cargo t
 - `crates/screenshot-core/` - Core library with platform backends (Wayland, X11, Windows)
 - `crates/screenshot-mcp-server/` - MCP server implementation using rmcp SDK
 - `crates/screenshot-cli/` - Command-line interface
+- `crates/screenshot-test-utils/` - Shared test utilities for integration tests
 
 ## Key Files
 
@@ -51,6 +52,23 @@ cargo test windows_backend -- --nocapture
 cargo test --all-features
 ```
 
+## Test Utilities
+
+For integration tests, use the `screenshot-test-utils` crate:
+
+```toml
+[dev-dependencies]
+screenshot-test-utils = { path = "../screenshot-test-utils" }
+```
+
+**Available modules:**
+
+- `screenshot_test_utils::windows` - Windows test fixtures (`WindowsTestContext`, `save_test_image`, `validate_image_pixels`, `find_best_target_window`)
+- `screenshot_test_utils::wayland` - Wayland test harness (`create_test_backend_with_store`, `setup_test_token`, `cleanup_test_tokens`)
+- `screenshot_test_utils::timing` - Cross-platform timing utilities (`measure_sync`, `assert_duration_below`, re-exports from `screenshot_core::perf`)
+
+**MCP-specific testing** uses `tests/common/mcp_harness.rs` in the server crate (depends on `ScreenshotMcpServer`).
+
 ## Commands
 
 - Build: `cargo build --release` or `just build`
@@ -64,7 +82,8 @@ cargo test --all-features
 
 - Rust MCP server using `rmcp` SDK for stdio-based Model Context Protocol
 - Modules: `capture/` (platform backends), `mcp.rs` (MCP handler), `model.rs` (types), `error.rs` (error types with remediation hints), `util/`, `perf/` (performance testing)
-- Feature flags: `image-processing` (default), `perf-tests`, `integration-tests`
+- Feature flags in screenshot-core: `image-processing` (default), `perf-tests`, `integration-tests`
+- Test utilities in separate `screenshot-test-utils` crate (no feature flags needed)
 
 ## Documentation
 

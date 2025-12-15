@@ -41,3 +41,7 @@ chrono.workspace = true
 [[bin]]
 name = "screenshot-mcp"
 path = "src/main.rs"
+
+[dev-dependencies]
+# Test utilities for integration tests
+screenshot-test-utils = { path = "../screenshot-test-utils" }
