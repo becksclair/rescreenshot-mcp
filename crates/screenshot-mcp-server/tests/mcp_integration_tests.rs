@@ -117,14 +117,18 @@ async fn test_capture_window_creates_temp_file() {
     let uri = ContentValidator::validate_file_uri(&result).expect("should have file URI");
 
     // Parse file:// URI to path
+    // On Windows: file:///C:/path → C:/path (strip file:///)
+    // On Linux: file:///path → /path (strip file:// to keep leading /)
+    #[cfg(target_os = "windows")]
     let path = uri
         .strip_prefix("file:///")
-        .or_else(|| uri.strip_prefix("file://"))
-        .expect("should have file:// prefix");
+        .expect("should have file:/// prefix on Windows")
+        .replace('/', "\\");
 
-    // On Windows, convert forward slashes
-    #[cfg(target_os = "windows")]
-    let path = path.replace('/', "\\");
+    #[cfg(not(target_os = "windows"))]
+    let path = uri
+        .strip_prefix("file://")
+        .expect("should have file:// prefix on Unix");
 
     assert!(std::path::Path::new(&path).exists(), "temp file should exist at: {}", path);
 }

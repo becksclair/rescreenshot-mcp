@@ -24,7 +24,7 @@
 //! # Examples
 //!
 //! ```
-//! use screenshot_mcp::util::key_store::KeyStore;
+//! use screenshot_core::util::key_store::KeyStore;
 //!
 //! let store = KeyStore::new();
 //!
@@ -85,7 +85,7 @@ use crate::error::{CaptureError, CaptureResult};
 /// # Examples
 ///
 /// ```no_run
-/// use screenshot_mcp::util::key_store::KeyStore;
+/// use screenshot_core::util::key_store::KeyStore;
 ///
 /// let store = KeyStore::new();
 ///
@@ -361,7 +361,7 @@ impl KeyStore {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::key_store::KeyStore;
+    /// use screenshot_core::util::key_store::KeyStore;
     ///
     /// let store = KeyStore::new();
     /// store.store_token("temp-source", "temp-token").unwrap();
@@ -407,8 +407,9 @@ impl KeyStore {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use screenshot_mcp::util::key_store::KeyStore;
+    /// ```ignore
+    /// // Requires keyring - not available in headless CI
+    /// use screenshot_core::util::key_store::KeyStore;
     ///
     /// let store = KeyStore::new();
     /// assert!(!store.has_token("nonexistent").unwrap());
@@ -468,7 +469,7 @@ impl KeyStore {
     /// # Examples
     ///
     /// ```
-    /// use screenshot_mcp::util::key_store::KeyStore;
+    /// use screenshot_core::util::key_store::KeyStore;
     ///
     /// let store = KeyStore::new();
     /// store.store_token("window-123", "token_v1").unwrap();

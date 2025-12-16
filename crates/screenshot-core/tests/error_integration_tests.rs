@@ -19,7 +19,7 @@
 mod wayland_error_integration {
     use std::sync::Arc;
 
-    use screenshot_core::{model::SourceType, util::key_store::KeyStore};
+    use screenshot_core::{capture::ImageBuffer, model::SourceType, util::key_store::KeyStore};
     use screenshot_test_utils::wayland::*;
 
     // ========================================================================

@@ -41,8 +41,8 @@
 //! # Examples
 //!
 //! ```rust,ignore
-//! use screenshot_mcp::{
-//!     capture::{CaptureFacade, wayland_backend::WaylandBackend},
+//! use screenshot_core::{
+//!     capture::WaylandBackend,
 //!     model::CaptureOptions,
 //!     util::key_store::KeyStore,
 //! };
@@ -75,8 +75,7 @@ use async_trait::async_trait;
 use image::GenericImageView;
 
 use super::{
-    BackendCapabilities, CaptureFacade, ImageBuffer, ScreenCapture, WaylandRestoreCapable,
-    WindowResolver,
+    BackendCapabilities, ImageBuffer, ScreenCapture, WaylandRestoreCapable, WindowResolver,
     constants::{
         PIPEWIRE_FRAME_TIMEOUT_SECS, PIPEWIRE_LOOP_ITERATION_MS, WAYLAND_PORTAL_TIMEOUT_SECS,
     },
@@ -93,7 +92,7 @@ use crate::{
 
 /// Wayland screenshot backend using XDG Desktop Portal
 ///
-/// Implements the [`CaptureFacade`] trait for Wayland compositors. Uses
+/// Implements the screen capture traits for Wayland compositors. Uses
 /// ephemeral portal connections and token-based permissions for secure,
 /// headless screenshot capture.
 ///
@@ -126,7 +125,7 @@ impl WaylandBackend {
     /// ```
     /// use std::sync::Arc;
     ///
-    /// use screenshot_mcp::{capture::wayland_backend::WaylandBackend, util::key_store::KeyStore};
+    /// use screenshot_core::{capture::wayland_backend::WaylandBackend, util::key_store::KeyStore};
     ///
     /// let key_store = Arc::new(KeyStore::new());
     /// let backend = WaylandBackend::new(key_store);
@@ -670,16 +669,13 @@ impl WaylandBackend {
         )
         .await
     }
-}
 
-#[async_trait]
-impl CaptureFacade for WaylandBackend {
     /// Lists Wayland capture targets derived from stored restore tokens
     ///
     /// Returns synthetic `WindowInfo` entries that map to primed Wayland
     /// sources. When no tokens exist, a single instructional entry is
     /// returned guiding the user to run `prime_wayland_consent`.
-    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
+    pub async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
         let source_ids = self.key_store.list_source_ids()?;
 
         if source_ids.is_empty() {
@@ -717,34 +713,7 @@ impl CaptureFacade for WaylandBackend {
     /// tokens. On Wayland, window handles use the format
     /// `wayland:<source-id>` where `source-id` corresponds to a stored
     /// restore token from a previous `prime_consent()` call.
-    ///
-    /// # Arguments
-    ///
-    /// * `selector` - Window selector with `exe` field containing
-    ///   "wayland:<source-id>"
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(source_id)` if token exists in KeyStore
-    /// - `Err(TokenNotFound)` if no token exists for source_id
-    /// - `Err(InvalidParameter)` if selector format is invalid
-    /// - `Err(WindowNotFound)` if selector doesn't match Wayland pattern
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // After calling prime_consent with source_id="wayland-default"
-    /// let selector = WindowSelector { exe: Some("wayland:wayland-default".to_string()), .. };
-    /// let handle = backend.resolve_target(&selector).await?;
-    /// // handle == "wayland-default"
-    /// ```
-    ///
-    /// # Integration with capture_window Tool
-    ///
-    /// The MCP `capture_window` tool uses this method when the selector
-    /// contains an `exe` field with the "wayland:" prefix, enabling
-    /// seamless integration with primed Wayland sources.
-    async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+    pub async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
         // Check if selector has any criteria
         if selector.title_substring_or_regex.is_none()
             && selector.class.is_none()
@@ -788,35 +757,7 @@ impl CaptureFacade for WaylandBackend {
     }
 
     /// Captures a screenshot of a specific window using restore token
-    ///
-    /// This method implements the core Wayland capture flow:
-    /// 1. Retrieve restore token from KeyStore
-    /// 2. Call portal with token to restore session
-    /// 3. Capture screenshot frame
-    /// 4. Rotate token (portal returns new single-use token)
-    /// 5. Apply transformations (scale, crop) from CaptureOptions
-    ///
-    /// If restore fails, falls back to display capture + region crop.
-    ///
-    /// # Arguments
-    ///
-    /// * `handle` - Window handle (source ID with token in KeyStore)
-    /// * `opts` - Capture options (format, quality, scale, region, cursor)
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(ImageBuffer)` with captured screenshot
-    /// - `Err(TokenNotFound)` if no token exists for this handle
-    /// - `Err(CaptureTimeout)` if operation exceeds 30 seconds
-    /// - `Err(PortalUnavailable)` if portal service not running
-    ///
-    /// # Errors
-    ///
-    /// - [`CaptureError::TokenNotFound`] - No restore token for this source
-    /// - [`CaptureError::CaptureTimeout`] - Operation took >30 seconds
-    /// - [`CaptureError::PortalUnavailable`] - Portal service unavailable
-    /// - [`CaptureError::PermissionDenied`] - User denied permission
-    async fn capture_window(
+    pub async fn capture_window_impl(
         &self,
         handle: WindowHandle,
         opts: &CaptureOptions,
@@ -834,7 +775,7 @@ impl CaptureFacade for WaylandBackend {
                              capture",
                             handle
                         );
-                        return self.capture_display(None, opts).await;
+                        return self.capture_display_impl(None, opts).await;
                     }
                 };
 
@@ -895,7 +836,7 @@ impl CaptureFacade for WaylandBackend {
                         "Token restore failed for source '{}', falling back to display capture",
                         source_id
                     );
-                    return self.capture_display(None, opts).await;
+                    return self.capture_display_impl(None, opts).await;
                 }
 
                 // Propagate other errors (non-token failures should fail-fast)
@@ -997,46 +938,7 @@ impl CaptureFacade for WaylandBackend {
     }
 
     /// Captures a screenshot of an entire display
-    ///
-    /// Opens the XDG Desktop Portal picker for the user to select which
-    /// display to capture. This is the fallback method when restore tokens
-    /// are not available or have expired.
-    ///
-    /// # Fallback Behavior
-    ///
-    /// This method is automatically called by `capture_window` when token
-    /// restoration fails. It creates a NEW portal session (no token reuse)
-    /// and presents the user with the picker dialog. The region from the
-    /// original capture options is preserved and applied to the display
-    /// capture result.
-    ///
-    /// # Arguments
-    ///
-    /// * `display_id` - Display identifier (ignored on Wayland - user selects
-    ///   via portal)
-    /// * `opts` - Capture options (format, quality, scale, region, cursor)
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(ImageBuffer)` with captured screenshot
-    /// - `Err(CaptureTimeout)` if operation exceeds 30 seconds
-    /// - `Err(PermissionDenied)` if user cancels portal dialog
-    ///
-    /// # Errors
-    ///
-    /// - [`CaptureError::CaptureTimeout`] - Operation took >30 seconds
-    /// - [`CaptureError::PortalUnavailable`] - Portal service unavailable
-    /// - [`CaptureError::PermissionDenied`] - User denied permission
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Manual display capture (not via fallback)
-    /// let backend = WaylandBackend::new(key_store);
-    /// let opts = CaptureOptions::default();
-    /// let image = backend.capture_display(None, &opts).await?;
-    /// ```
-    async fn capture_display(
+    pub async fn capture_display_impl(
         &self,
         _display_id: Option<u32>,
         opts: &CaptureOptions,
@@ -1171,18 +1073,7 @@ impl CaptureFacade for WaylandBackend {
     }
 
     /// Returns the capabilities of this Wayland backend
-    ///
-    /// Wayland backends support:
-    /// - Display capture: Yes (via portal picker)
-    /// - Window capture: No (security limitation)
-    /// - Cursor inclusion: Yes (via portal option)
-    /// - Region cropping: Yes (post-capture)
-    /// - Restore tokens: Yes (permission-free recapture)
-    ///
-    /// # Returns
-    ///
-    /// A [`Capabilities`] struct describing Wayland-specific features.
-    fn capabilities(&self) -> Capabilities {
+    pub fn capabilities(&self) -> Capabilities {
         Capabilities {
             supports_cursor: true,              // Portal supports cursor option
             supports_region: true,              // Post-capture cropping
@@ -1192,8 +1083,22 @@ impl CaptureFacade for WaylandBackend {
         }
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    /// Compatibility shim for capture_window - delegates to capture_window_impl
+    pub async fn capture_window(
+        &self,
+        handle: WindowHandle,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        self.capture_window_impl(handle, opts).await
+    }
+
+    /// Compatibility shim for capture_display - delegates to capture_display_impl
+    pub async fn capture_display(
+        &self,
+        display_id: Option<u32>,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        self.capture_display_impl(display_id, opts).await
     }
 }
 
@@ -1207,8 +1112,7 @@ impl CaptureFacade for WaylandBackend {
 #[async_trait]
 impl WindowResolver for WaylandBackend {
     async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
-        // Delegate to CaptureFacade implementation
-        CaptureFacade::resolve_target(self, selector).await
+        self.resolve_target(selector).await
     }
 }
 
@@ -1219,8 +1123,7 @@ impl ScreenCapture for WaylandBackend {
         handle: WindowHandle,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        // Delegate to CaptureFacade implementation
-        CaptureFacade::capture_window(self, handle, opts).await
+        self.capture_window_impl(handle, opts).await
     }
 
     async fn capture_display(
@@ -1228,8 +1131,7 @@ impl ScreenCapture for WaylandBackend {
         display_id: Option<u32>,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        // Delegate to CaptureFacade implementation
-        CaptureFacade::capture_display(self, display_id, opts).await
+        self.capture_display_impl(display_id, opts).await
     }
 }
 
@@ -1252,7 +1154,7 @@ impl WaylandRestoreCapable for WaylandBackend {
     ) -> CaptureResult<ImageBuffer> {
         // Use the existing capture_window with a wayland: prefixed handle
         let handle = format!("wayland:{}", source_id);
-        CaptureFacade::capture_window(self, handle, opts).await
+        self.capture_window_impl(handle, opts).await
     }
 
     fn list_sources(&self) -> CaptureResult<Vec<String>> {

@@ -117,7 +117,7 @@ impl WindowsBackend {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use screenshot_mcp::capture::windows_backend::WindowsBackend;
+    /// use screenshot_core::capture::windows_backend::WindowsBackend;
     ///
     /// let backend = WindowsBackend::new().unwrap();
     /// ```

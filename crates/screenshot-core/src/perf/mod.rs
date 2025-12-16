@@ -14,7 +14,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use screenshot_mcp::perf::*;
+//! use screenshot_core::perf::*;
 //!
 //! let result = measure_operation(
 //!     "my_operation",
@@ -143,7 +143,7 @@ impl TimingResult {
 /// ## Example
 ///
 /// ```ignore
-/// use screenshot_mcp::perf::measure_operation;
+/// use screenshot_core::perf::measure_operation;
 ///
 /// let (value, timing) = measure_operation(
 ///     "database_query",
@@ -180,7 +180,7 @@ where
 /// ## Example
 ///
 /// ```ignore
-/// use screenshot_mcp::perf::time_async;
+/// use screenshot_core::perf::time_async;
 ///
 /// let (result, duration) = time_async(async {
 ///     expensive_computation()
@@ -205,7 +205,7 @@ where
 /// ## Example
 ///
 /// ```ignore
-/// use screenshot_mcp::perf::{TimingResult, print_timing_result};
+/// use screenshot_core::perf::{TimingResult, print_timing_result};
 /// use std::time::Duration;
 ///
 /// let timing = TimingResult::new("capture", Duration::from_millis(1250), true);
@@ -227,7 +227,7 @@ pub fn print_timing_result(result: &TimingResult) {
 /// ## Example
 ///
 /// ```ignore
-/// use screenshot_mcp::perf::{TimingResult, print_timing_summary};
+/// use screenshot_core::perf::{TimingResult, print_timing_summary};
 /// use std::time::Duration;
 ///
 /// let results = vec![

@@ -37,7 +37,6 @@
 
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
-use std::time::Duration;
 
 // Re-export timing utilities from the timing module
 pub use crate::timing::{
@@ -130,6 +129,7 @@ pub fn default_test_capture_options() -> CaptureOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_assert_duration_below_success() {

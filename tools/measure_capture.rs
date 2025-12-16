@@ -41,7 +41,7 @@ use std::{process, sync::Arc, time::Duration};
 
 #[cfg(target_os = "linux")]
 use screenshot_mcp::{
-    capture::{CaptureFacade, wayland_backend::WaylandBackend},
+    capture::wayland_backend::WaylandBackend,
     model::{CaptureOptions, SourceType},
     perf::{PerformanceThresholds, measure_operation},
     util::key_store::KeyStore,

@@ -38,7 +38,8 @@ jobs:
             libdrm-dev libgbm-dev libegl1-mesa-dev \
             libsecret-1-dev \
             libpipewire-0.3-dev \
-            xvfb
+            xvfb \
+            openbox
 
       - name: Install Dependencies (Fedora)
         if: startsWith(matrix.container, 'fedora')
@@ -84,7 +85,15 @@ jobs:
       - name: Run X11 integration tests (headless)
         if: startsWith(matrix.container, 'ubuntu')
         run: |
-          xvfb-run -a cargo test --test x11_integration_tests -p screenshot-core --all-features
+          # Start Xvfb with a virtual display
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 1
+          export DISPLAY=:99
+          # Start openbox window manager (provides _NET_CLIENT_LIST for window enumeration)
+          openbox &
+          sleep 1
+          # Run the tests
+          cargo test --test x11_integration_tests -p screenshot-core --all-features
 
       - name: Upload coverage to Codecov
         if: ${{ !env.ACT }}  # Skipped in act (container jobs lack Node.js)

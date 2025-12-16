@@ -445,7 +445,7 @@ impl WindowMatcher {
 /// # Examples
 ///
 /// ```ignore
-/// use screenshot_mcp::capture::matching;
+/// use screenshot_core::capture::matching;
 ///
 /// let windows = vec![/* ... */];
 /// if let Some(handle) = matching::try_regex_match("Firefox.*", &windows) {

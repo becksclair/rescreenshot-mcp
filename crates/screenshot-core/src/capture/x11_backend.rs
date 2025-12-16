@@ -37,8 +37,8 @@
 //! # Examples
 //!
 //! ```rust,ignore
-//! use screenshot_mcp::{
-//!     capture::{CaptureFacade, x11_backend::X11Backend},
+//! use screenshot_core::{
+//!     capture::X11Backend,
 //!     model::{CaptureOptions, WindowSelector},
 //! };
 //!
@@ -67,8 +67,8 @@ use x11rb::{
 };
 
 use super::{
-    BackendCapabilities, CaptureFacade, ImageBuffer, ScreenCapture, WindowEnumerator,
-    WindowMatcher, WindowResolver,
+    BackendCapabilities, ImageBuffer, ScreenCapture, WindowEnumerator, WindowMatcher,
+    WindowResolver,
     constants::{LIST_WINDOWS_TIMEOUT_MS, X11_CAPTURE_TIMEOUT_MS},
 };
 use crate::{
@@ -78,7 +78,7 @@ use crate::{
 
 /// X11 screenshot backend using x11rb + xcap
 ///
-/// Implements the [`CaptureFacade`] trait for X11 display servers. Uses a lazy
+/// Implements the screen capture traits for X11 display servers. Uses a lazy
 /// shared connection to the X server and caches EWMH atoms for efficient
 /// property queries.
 ///
@@ -177,7 +177,7 @@ impl X11Backend {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// use screenshot_mcp::capture::x11_backend::X11Backend;
+    /// use screenshot_core::capture::x11_backend::X11Backend;
     ///
     /// let backend = X11Backend::new().unwrap();
     /// ```
@@ -891,25 +891,13 @@ impl X11Backend {
     fn try_fuzzy_match(&self, pattern: &str, windows: &[WindowInfo]) -> Option<WindowHandle> {
         super::matching::try_fuzzy_match(pattern, windows)
     }
-}
 
-#[async_trait]
-impl CaptureFacade for X11Backend {
     /// Lists all X11 windows with metadata
     ///
     /// Queries the _NET_CLIENT_LIST property from the root window to enumerate
     /// all managed windows, then fetches properties (title, class, PID) for
     /// each.
-    ///
-    /// # Returns
-    ///
-    /// A vector of [`WindowInfo`] structs with window metadata.
-    ///
-    /// # Errors
-    ///
-    /// - [`CaptureError::BackendNotAvailable`] - X11 connection failed
-    /// - [`CaptureError::CaptureTimeout`] - Operation exceeded 1.5s
-    async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
+    pub async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
         Self::with_timeout(
             async {
                 tracing::debug!("Starting X11 window enumeration");
@@ -924,7 +912,6 @@ impl CaptureFacade for X11Backend {
                 tracing::debug!("Found {} window IDs, fetching metadata", window_ids.len());
 
                 // Fetch metadata for all windows sequentially
-                // (Parallel fetching would require multiple connections, which is more complex)
                 let mut windows = Vec::new();
                 for &win_id in &window_ids {
                     if let Some(info) = self.fetch_window_info(&conn, win_id, &atoms) {
@@ -946,40 +933,8 @@ impl CaptureFacade for X11Backend {
     }
 
     /// Resolves a window selector to a window handle
-    ///
-    /// Uses `WindowMatcher` with AND semantics: when multiple fields are
-    /// specified, all must match.
-    ///
-    /// # Arguments
-    ///
-    /// - `selector` - Window selector with title/class/exe criteria
-    ///
-    /// # Returns
-    ///
-    /// A window handle (X11 Window ID as string).
-    ///
-    /// # Errors
-    ///
-    /// - [`CaptureError::WindowNotFound`] - No matching window found
-    /// - [`CaptureError::InvalidParameter`] - Empty selector
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Title only
-    /// let selector = WindowSelector::by_title("Firefox");
-    /// let handle = backend.resolve_target(&selector).await?;
-    ///
-    /// // Title AND class (AND semantics)
-    /// let selector = WindowSelector {
-    ///     title_substring_or_regex: Some("Firefox".to_string()),
-    ///     class: Some("Navigator".to_string()),
-    ///     exe: None,
-    /// };
-    /// let handle = backend.resolve_target(&selector).await?;
-    /// ```
     #[cfg(target_os = "linux")]
-    async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+    pub async fn resolve_target(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
         tracing::debug!("Resolving window target: {:?}", selector);
 
         // Validate selector is not empty
@@ -1012,28 +967,15 @@ impl CaptureFacade for X11Backend {
     }
 
     #[cfg(not(target_os = "linux"))]
-    async fn resolve_target(&self, _selector: &WindowSelector) -> CaptureResult<WindowHandle> {
+    pub async fn resolve_target(&self, _selector: &WindowSelector) -> CaptureResult<WindowHandle> {
         Err(CaptureError::BackendNotAvailable {
             backend: BackendType::X11,
         })
     }
 
-    /// Captures a screenshot of a specific window
-    ///
-    /// Uses xcap to capture the window by its X11 Window ID. Applies
-    /// transformations (crop, scale) as specified in options.
-    ///
-    /// # Returns
-    ///
-    /// An [`ImageBuffer`] with the captured screenshot.
-    ///
-    /// # Errors
-    ///
-    /// - [`CaptureError::WindowNotFound`] - Window no longer exists
-    /// - [`CaptureError::BackendNotAvailable`] - xcap capture failed
-    /// - [`CaptureError::CaptureTimeout`] - Operation exceeded 2s
+    /// Captures a screenshot of a specific window (implementation)
     #[cfg(target_os = "linux")]
-    async fn capture_window(
+    pub async fn capture_window_impl(
         &self,
         handle: WindowHandle,
         opts: &CaptureOptions,
@@ -1049,13 +991,10 @@ impl CaptureFacade for X11Backend {
             }
         })?;
 
-        // Wrap xcap capture in spawn_blocking to avoid blocking async runtime
-        // xcap uses synchronous X11 calls that can block
+        // Wrap xcap capture in spawn_blocking
         let capture_future = tokio::task::spawn_blocking(move || {
             tracing::debug!("Enumerating xcap windows to find ID: {}", win_id);
 
-            // xcap doesn't have a from_raw_id() method, so we enumerate all windows
-            // and find the one with matching ID
             let windows = xcap::Window::all().map_err(|e| {
                 tracing::error!("Failed to enumerate xcap windows: {}", e);
                 CaptureError::BackendNotAvailable {
@@ -1065,7 +1004,6 @@ impl CaptureFacade for X11Backend {
 
             tracing::debug!("Found {} xcap windows, searching for ID {}", windows.len(), win_id);
 
-            // Find window by ID (xcap's Window::id() returns Result<u32>)
             let window = windows
                 .into_iter()
                 .find(|w| w.id().ok() == Some(win_id))
@@ -1086,11 +1024,8 @@ impl CaptureFacade for X11Backend {
                 window.title().unwrap_or_else(|_| "Unknown".to_string())
             );
 
-            // Capture the window image
             let image = window.capture_image().map_err(|e| {
                 tracing::error!("xcap capture failed for window {}: {}", win_id, e);
-
-                // Map capture errors
                 let err_str = e.to_string().to_lowercase();
                 if err_str.contains("not found") || err_str.contains("destroyed") {
                     CaptureError::WindowNotFound {
@@ -1134,13 +1069,11 @@ impl CaptureFacade for X11Backend {
         // Convert RgbaImage to ImageBuffer and apply transformations
         let mut buffer = ImageBuffer::new(image::DynamicImage::ImageRgba8(image));
 
-        // Apply transformations (crop, scale, format)
         if let Some(region) = &opts.region {
             tracing::debug!("Applying crop: {:?}", region);
             buffer = buffer.crop(*region)?;
         }
 
-        // scale is f32, not Option<f32>
         if opts.scale != 1.0 {
             tracing::debug!("Applying scale: {}", opts.scale);
             buffer = buffer.scale(opts.scale)?;
@@ -1150,7 +1083,7 @@ impl CaptureFacade for X11Backend {
     }
 
     #[cfg(not(target_os = "linux"))]
-    async fn capture_window(
+    pub async fn capture_window_impl(
         &self,
         _handle: WindowHandle,
         _opts: &CaptureOptions,
@@ -1160,28 +1093,9 @@ impl CaptureFacade for X11Backend {
         })
     }
 
-    /// Captures a screenshot of an entire display
-    ///
-    /// Captures the primary monitor or a specific display by ID. On X11, this
-    /// uses xcap to capture the full screen and optionally apply
-    /// transformations.
-    ///
-    /// # Arguments
-    ///
-    /// - `display_id` - Optional display ID (unused on X11, always captures
-    ///   primary screen)
-    /// - `opts` - Capture options (region, scale, format)
-    ///
-    /// # Returns
-    ///
-    /// An [`ImageBuffer`] with the captured screenshot.
-    ///
-    /// # Errors
-    ///
-    /// - [`CaptureError::BackendNotAvailable`] - Display capture failed
-    /// - [`CaptureError::CaptureTimeout`] - Operation exceeded timeout
+    /// Captures a screenshot of an entire display (implementation)
     #[cfg(target_os = "linux")]
-    async fn capture_display(
+    pub async fn capture_display_impl(
         &self,
         display_id: Option<u32>,
         opts: &CaptureOptions,
@@ -1191,10 +1105,7 @@ impl CaptureFacade for X11Backend {
             display_id
         );
 
-        // xcap doesn't have a direct "display capture" API; use Screen::all()
-        // Use Monitor::all() to enumerate displays
         let capture_future = tokio::task::spawn_blocking(|| {
-            // Get all monitors and capture the primary one
             let monitors = xcap::Monitor::all().map_err(|e| {
                 tracing::error!("xcap failed to enumerate monitors: {}", e);
                 Self::map_xcap_error(e, "enumerate_monitors")
@@ -1207,7 +1118,6 @@ impl CaptureFacade for X11Backend {
                 });
             }
 
-            // Use first monitor (primary display)
             let monitor = &monitors[0];
             tracing::debug!(
                 "Capturing monitor: {:?}x{:?} at ({:?}, {:?})",
@@ -1227,7 +1137,6 @@ impl CaptureFacade for X11Backend {
             Ok::<_, CaptureError>(image)
         });
 
-        // Wait for capture with timeout
         let image = Self::with_timeout(
             async {
                 capture_future.await.map_err(|e| {
@@ -1241,10 +1150,8 @@ impl CaptureFacade for X11Backend {
         )
         .await?;
 
-        // Convert RgbaImage to ImageBuffer and apply transformations
         let mut buffer = ImageBuffer::new(image::DynamicImage::ImageRgba8(image));
 
-        // Apply transformations (crop, scale)
         if let Some(region) = &opts.region {
             tracing::debug!("Applying crop to display: {:?}", region);
             buffer = buffer.crop(*region)?;
@@ -1259,7 +1166,7 @@ impl CaptureFacade for X11Backend {
     }
 
     #[cfg(not(target_os = "linux"))]
-    async fn capture_display(
+    pub async fn capture_display_impl(
         &self,
         _display_id: Option<u32>,
         _opts: &CaptureOptions,
@@ -1270,14 +1177,7 @@ impl CaptureFacade for X11Backend {
     }
 
     /// Returns the capabilities of this X11 backend
-    ///
-    /// X11 backends support:
-    /// - Display capture: Yes
-    /// - Window capture: Yes (direct enumeration)
-    /// - Cursor inclusion: No (xcap limitation)
-    /// - Region cropping: Yes (post-capture)
-    /// - Restore tokens: No (X11 doesn't need permission persistence)
-    fn capabilities(&self) -> Capabilities {
+    pub fn capabilities(&self) -> Capabilities {
         Capabilities {
             supports_cursor: false,            // xcap doesn't support cursor capture
             supports_region: true,             // Post-capture cropping supported
@@ -1287,8 +1187,22 @@ impl CaptureFacade for X11Backend {
         }
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    /// Compatibility shim for capture_window
+    pub async fn capture_window(
+        &self,
+        handle: WindowHandle,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        self.capture_window_impl(handle, opts).await
+    }
+
+    /// Compatibility shim for capture_display
+    pub async fn capture_display(
+        &self,
+        display_id: Option<u32>,
+        opts: &CaptureOptions,
+    ) -> CaptureResult<ImageBuffer> {
+        self.capture_display_impl(display_id, opts).await
     }
 }
 
@@ -1299,71 +1213,37 @@ impl CaptureFacade for X11Backend {
 #[async_trait]
 impl WindowEnumerator for X11Backend {
     async fn list_windows(&self) -> CaptureResult<Vec<WindowInfo>> {
-        // Delegate to CaptureFacade implementation
-        CaptureFacade::list_windows(self).await
+        X11Backend::list_windows(self).await
     }
 }
 
 #[async_trait]
 impl WindowResolver for X11Backend {
-    #[cfg(target_os = "linux")]
     async fn resolve(&self, selector: &WindowSelector) -> CaptureResult<WindowHandle> {
-        // Delegate to CaptureFacade implementation
-        CaptureFacade::resolve_target(self, selector).await
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    async fn resolve(&self, _selector: &WindowSelector) -> CaptureResult<WindowHandle> {
-        Err(CaptureError::BackendNotAvailable {
-            backend: BackendType::X11,
-        })
+        self.resolve_target(selector).await
     }
 }
 
 #[async_trait]
 impl ScreenCapture for X11Backend {
-    #[cfg(target_os = "linux")]
     async fn capture_window(
         &self,
         handle: WindowHandle,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        // Delegate to CaptureFacade implementation
-        CaptureFacade::capture_window(self, handle, opts).await
+        self.capture_window_impl(handle, opts).await
     }
 
-    #[cfg(not(target_os = "linux"))]
-    async fn capture_window(
-        &self,
-        _handle: WindowHandle,
-        _opts: &CaptureOptions,
-    ) -> CaptureResult<ImageBuffer> {
-        Err(CaptureError::BackendNotAvailable {
-            backend: BackendType::X11,
-        })
-    }
-
-    #[cfg(target_os = "linux")]
     async fn capture_display(
         &self,
         display_id: Option<u32>,
         opts: &CaptureOptions,
     ) -> CaptureResult<ImageBuffer> {
-        // Delegate to CaptureFacade implementation
-        CaptureFacade::capture_display(self, display_id, opts).await
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    async fn capture_display(
-        &self,
-        _display_id: Option<u32>,
-        _opts: &CaptureOptions,
-    ) -> CaptureResult<ImageBuffer> {
-        Err(CaptureError::BackendNotAvailable {
-            backend: BackendType::X11,
-        })
+        self.capture_display_impl(display_id, opts).await
     }
 }
+
+// Note: X11Backend does NOT implement WaylandRestoreCapable
 
 impl BackendCapabilities for X11Backend {
     fn supports_cursor(&self) -> bool {
@@ -2076,20 +1956,6 @@ mod tests {
             assert_eq!(caps1.supports_wayland_restore, caps2.supports_wayland_restore);
             assert_eq!(caps1.supports_window_enumeration, caps2.supports_window_enumeration);
             assert_eq!(caps1.supports_display_capture, caps2.supports_display_capture);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_as_any_downcasting() {
-        // Verify that as_any() allows backend downcasting
-        if std::env::var("DISPLAY").is_ok() {
-            let backend = X11Backend::new().unwrap();
-            let facade: &dyn CaptureFacade = &backend;
-
-            // Should be able to downcast to X11Backend
-            let any = facade.as_any();
-            let x11 = any.downcast_ref::<X11Backend>();
-            assert!(x11.is_some(), "Should be able to downcast to X11Backend");
         }
     }
 
