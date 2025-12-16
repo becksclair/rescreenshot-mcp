@@ -48,6 +48,22 @@ impl CaptureFormat {
     }
 }
 
+/// Output mode for screenshot capture results
+///
+/// Controls whether the screenshot is returned as inline base64 data,
+/// a file resource link, or both.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureOutputMode {
+    /// Return base64 image data only (no temp file)
+    Inline,
+    /// Return file path resource only (no base64 data)
+    File,
+    /// Return both (default)
+    #[default]
+    Both,
+}
+
 /// Region of a window to capture (crop coordinates)
 ///
 /// All coordinates are in pixels relative to the window's top-left corner.
@@ -105,6 +121,10 @@ pub struct CaptureWindowParams {
     /// Values < 1.0 reduce size, > 1.0 enlarge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<f32>,
+
+    /// Output mode: "inline" (base64), "file" (path), or "both" (default)
+    #[serde(default)]
+    pub output: CaptureOutputMode,
 
     /// Whether to include cursor in capture (default: false)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -553,7 +573,11 @@ impl ScreenshotMcpServer {
     /// Captures a screenshot of a specific window
     ///
     /// Finds a window matching the selector criteria and captures a screenshot.
-    /// Returns both inline image data and a file resource link for persistent access.
+    ///
+    /// The response shape is controlled by the `output` parameter:
+    /// - `output: "both"` (default): inline base64 image + file link + metadata
+    /// - `output: "inline"`: inline base64 image + metadata (no temp file written)
+    /// - `output: "file"`: file link + metadata (no base64 generated)
     ///
     /// # Window Selection Parameters (at least one required)
     ///
@@ -566,15 +590,16 @@ impl ScreenshotMcpServer {
     /// - `format` (optional): Output format - "png", "jpeg", or "webp" (default: "webp")
     /// - `quality` (optional): Quality 0-100 for JPEG/WebP (default: 80, ignored for PNG)
     /// - `scale` (optional): Scale factor 0.1-2.0 (default: 1.0)
+    /// - `output` (optional): Output mode - "inline", "file", or "both" (default: "both")
     /// - `includeCursor` (optional): Include cursor in capture (default: false)
     /// - `region` (optional): Crop region `{x, y, width, height}` (default: full window)
     ///
     /// # Returns
     ///
     /// A `CallToolResult` containing:
-    /// 1. Inline image content (base64-encoded)
-    /// 2. Resource link with file:// URI
-    /// 3. Metadata (dimensions, format, size)
+    /// - Inline image content (base64-encoded) if `output` includes inline
+    /// - A file link with file:// URI if `output` includes file
+    /// - Metadata (dimensions, format, size, etc.) always
     ///
     /// # Examples
     ///
@@ -695,14 +720,31 @@ impl ScreenshotMcpServer {
         let encoded_data =
             encode_image(&image_buffer, &opts).map_err(convert_capture_error_to_mcp)?;
 
-        // Write to temp file
-        let (file_path, _file_size) = self
-            .temp_files
-            .write_image(&encoded_data, opts.format)
-            .map_err(convert_capture_error_to_mcp)?;
+        // Determine output modes
+        let should_save_file =
+            matches!(params.output, CaptureOutputMode::File | CaptureOutputMode::Both);
+        let should_inline_image =
+            matches!(params.output, CaptureOutputMode::Inline | CaptureOutputMode::Both);
 
-        // Build dual-format result (image + file link + metadata)
-        let result = build_capture_result(&encoded_data, &file_path, &opts, dimensions);
+        // Write to temp file if requested
+        let file_path = if should_save_file {
+            let (path, _size) = self
+                .temp_files
+                .write_image(&encoded_data, opts.format)
+                .map_err(convert_capture_error_to_mcp)?;
+            Some(path)
+        } else {
+            None
+        };
+
+        // Build result based on requested output mode
+        let result = build_capture_result(
+            &encoded_data,
+            file_path.as_deref(),
+            &opts,
+            dimensions,
+            should_inline_image,
+        );
 
         Ok(result)
     }
@@ -1280,6 +1322,105 @@ mod tests {
         let tool_result = result.unwrap();
         let image = tool_result.content[0].as_image().unwrap();
         assert_eq!(image.mime_type, "image/png", "should use PNG format");
+    }
+
+    // ========== Output Mode Tests ==========
+
+    #[tokio::test]
+    async fn test_capture_window_output_inline() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                output: CaptureOutputMode::Inline,
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with inline output");
+        let tool_result = result.unwrap();
+
+        // Should have 2 content items: Image + Metadata (no resource link)
+        assert_eq!(tool_result.content.len(), 2);
+
+        // First content should be image
+        assert!(tool_result.content[0].as_image().is_some(), "should include image");
+
+        // Second content should be metadata
+        let metadata = tool_result.content[1].as_text().unwrap();
+        assert!(metadata.text.contains("Capture Metadata"));
+
+        // Verify no file path in metadata
+        assert!(!metadata.text.contains("file://"), "should not have file path URI");
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_output_file() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                output: CaptureOutputMode::File,
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with file output");
+        let tool_result = result.unwrap();
+
+        // Should have 2 content items: Resource Link + Metadata (no image)
+        assert_eq!(tool_result.content.len(), 2);
+
+        // First content should be resource link
+        let resource = tool_result.content[0].as_text().unwrap();
+        assert!(resource.text.contains("Screenshot File Reference"));
+        assert!(resource.text.contains("file://"));
+
+        // Second content should be metadata
+        assert!(
+            tool_result.content[1]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("Capture Metadata")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_capture_window_output_both() {
+        let server = ScreenshotMcpServer::new_with_mock();
+
+        let result = server
+            .capture_window(CaptureWindowParams {
+                title_substring_or_regex: Some("Firefox".to_string()),
+                output: CaptureOutputMode::Both,
+                ..Default::default()
+            })
+            .await;
+
+        assert!(result.is_ok(), "capture should succeed with both output");
+        let tool_result = result.unwrap();
+
+        // Should have 3 content items: Image + Resource Link + Metadata
+        assert_eq!(tool_result.content.len(), 3);
+
+        assert!(tool_result.content[0].as_image().is_some());
+        assert!(
+            tool_result.content[1]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("Screenshot File Reference")
+        );
+        assert!(
+            tool_result.content[2]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("Capture Metadata")
+        );
     }
 
     // ========== Error Path Tests for MCP Error Code Mapping ==========

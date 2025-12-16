@@ -306,95 +306,61 @@
 
 ---
 
-#### A2: MCP Streaming Support for Large Images
+#### A2: MCP Output Modes for Large Images ✅ COMPLETE
 
-**Problem:** Large screenshots (4K displays, multi-monitor captures) can produce 10+ MB of encoded image data. The current implementation loads the entire image into memory and returns it as a single base64 blob, which can cause:
+**Problem:** Large screenshots (4K displays, multi-monitor captures) can produce 10+ MB of encoded image data. Returning large images as a single base64 blob over JSON-RPC can cause:
 - Memory pressure on both server and client
 - Timeout issues for slow connections
 - Poor UX when waiting for large transfers
 
-**Current Design:**
-```rust
-// capture_window returns entire image in memory
-let image = backend.capture_window(handle, &opts).await?;
-let encoded = encode_image(&image, format, quality)?;
-let base64 = base64::encode(&encoded);
-Ok(CallToolResult::success(vec![Content::image(base64, mime_type)]))
-```
+**Previous Behavior:** `capture_window` always returned **both**:
+- Inline base64 image content (for preview)
+- A temp-file link (for persistent access)
 
-**Proposed Design:**
+That meant we paid the cost of base64+JSON transfer even when the agent could read local files directly.
 
-1. **File-based response for large images:**
-```rust
-// For images > 1MB, write to temp file and return path
-if encoded.len() > 1_048_576 {
-    let temp_path = temp_files.write_image(&encoded, format)?;
-    Ok(CallToolResult::success(vec![
-        Content::resource(ResourceLink {
-            uri: format!("file://{}", temp_path.display()),
-            mime_type: Some(mime_type.to_string()),
-            ..Default::default()
-        })
-    ]))
-} else {
-    // Small images: inline base64
-    Ok(CallToolResult::success(vec![Content::image(base64, mime_type)]))
-}
-```
+**Implemented Design (v0.6.0):**
 
-2. **Progressive JPEG option:**
-```rust
-// Add progressive encoding for bandwidth-constrained scenarios
-pub struct CaptureOptions {
-    // ... existing fields
-    pub progressive: bool,  // Use progressive JPEG encoding
-}
-```
+1. **`capture_window.output` mode switch** (explicit, agent-controlled):
+   - `output: "inline"` → returns **image + metadata** (no temp file written)
+   - `output: "file"` → returns **file link + metadata** (no base64 produced)
+   - `output: "both"` (default) → returns **image + file link + metadata** (back-compat)
 
-3. **Capture-to-file tool:**
-```rust
-#[tool(description = "Capture window and save to file (no base64 overhead)")]
-pub async fn capture_window_to_file(
-    &self,
-    params: CaptureWindowToFileParams,
-) -> Result<CallToolResult, McpError> {
-    // Returns only file path, not image data
-}
-```
+2. **`build_capture_result(...)` now supports optional content**:
+   - File link generation is conditional
+   - Inline base64 generation is conditional
 
-**Implementation Steps:**
+3. **Tests**:
+   - Added unit tests for all three output modes (`inline`, `file`, `both`)
+   - Updated doctests/docs examples to match the new signature
 
-1. **Phase 1: Add file-based fallback**
-   - [ ] Add size threshold constant (`INLINE_IMAGE_MAX_BYTES = 1_048_576`)
-   - [ ] Update `build_capture_result()` to check encoded size
-   - [ ] Return `ResourceLink` for large images
-   - [ ] Add temp file cleanup on session end
+**Implementation Steps (completed):**
 
-2. **Phase 2: Add capture_to_file tool**
-   - [ ] Create `CaptureWindowToFileParams` struct
-   - [ ] Implement `capture_window_to_file` tool handler
-   - [ ] Return structured response with file path and metadata
-   - [ ] Add tool to schema
+1. **Phase 1: Add output modes**
+   - [x] Add `CaptureOutputMode` and `output` param to `capture_window`
+   - [x] Update `capture_window` to skip temp file writes for `inline`
+   - [x] Update `capture_window` to skip base64 generation for `file`
 
-3. **Phase 3: Progressive encoding**
-   - [ ] Add `progressive` field to `CaptureOptions`
-   - [ ] Update JPEG encoder to support progressive mode
-   - [ ] Add tests for progressive encoding
-   - [ ] Document tradeoffs (faster perceived load, slightly larger file)
+2. **Phase 2: Refactor MCP content builder**
+   - [x] Make file link optional
+   - [x] Make inline image optional
+   - [x] Keep metadata always returned
 
-4. **Phase 4: MCP streaming (if rmcp supports it)**
-   - [ ] Investigate rmcp streaming capabilities
-   - [ ] Implement chunked transfer if available
-   - [ ] Add progress reporting for large captures
+3. **Phase 3: Documentation**
+   - [x] Document `output` modes in `docs/usage.md`
+   - [x] Add troubleshooting note for large captures
+
+**Notes / Follow-ups (optional):**
+- Auto-selection based on size threshold (e.g. “inline unless > 1MB”) could be added later, but explicit `output` is a better default for agents.
+- True MCP streaming/chunking is still a separate investigation (depends on SDK and client support).
+- `rmcp` resource link support can replace the current text-based file link when it’s publicly exposed/usable.
 
 **Files to Modify:**
-- `crates/screenshot-mcp-server/src/mcp_content.rs` (size-based routing)
-- `crates/screenshot-mcp-server/src/mcp.rs` (new tool)
-- `crates/screenshot-core/src/model.rs` (progressive option)
-- `crates/screenshot-core/src/util/encode.rs` (progressive JPEG)
+- `crates/screenshot-mcp-server/src/mcp_content.rs` (conditional content)
+- `crates/screenshot-mcp-server/src/mcp.rs` (`output` modes)
 
 **Breaking Changes:** No (additive)
-**Estimated Effort:** 2-3 days
+**Estimated Effort:** Done
 
 ---
 
@@ -407,6 +373,7 @@ pub async fn capture_window_to_file(
 - [ ] Ensure rustfmt compliance (automated by coding agent)
 - [ ] Keep unsafe code minimal
 - [ ] Document all public APIs
+- [ ] Decide how to handle `cargo audit` unmaintained dependency warning (RUSTSEC-2024-0436: `paste` via `image` -> `ravif` -> `rav1e`) — either accept + track, or adjust features/deps to avoid the AVIF stack if not needed
 
 ### Performance
 
@@ -547,8 +514,8 @@ pub async fn capture_window_to_file(
 
 5. **Deferred:** M6b macOS CI + packaging
 
-6. **Future:** Architectural improvements (A2)
-   - A2: MCP streaming for large images (performance)
+6. **Future:** Architectural improvements
+   - (Optional) Investigate true streaming/chunking for large artifacts (SDK/client dependent)
 
 ---
 

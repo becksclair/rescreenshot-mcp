@@ -8,7 +8,7 @@ API reference and workflows for screenshot-mcp.
 |------|---------|-------------|
 | `health_check` | platform, backend, ok | First call - detect environment |
 | `list_windows` | id, title, class, owner | Find capture targets |
-| `capture_window` | image + file path | Take screenshot |
+| `capture_window` | image, file link, metadata | Take screenshot (choose output mode) |
 | `prime_wayland_consent` | token stored | Wayland only - one-time setup |
 
 ---
@@ -33,13 +33,7 @@ Detects platform and backend status.
 
 Enumerates visible windows with metadata.
 
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `filter.title` | string | Substring match on title |
-| `filter.class` | string | Window class/type |
-| `filter.owner` | string | Process/application name |
+**Parameters:** None.
 
 **Request:**
 ```json
@@ -76,6 +70,7 @@ Captures a screenshot of a specific window.
 | `format` | string | `"webp"` | `"webp"`, `"png"`, or `"jpeg"` |
 | `quality` | number | 80 | 0-100 (webp/jpeg only) |
 | `scale` | number | 1.0 | 0.1-2.0 resize factor |
+| `output` | string | `"both"` | `"inline"`, `"file"`, or `"both"` |
 | `includeCursor` | boolean | false | Include cursor in capture |
 | `region` | object | - | Crop region `{x, y, width, height}` |
 
@@ -87,6 +82,7 @@ Captures a screenshot of a specific window.
   "name": "capture_window",
   "arguments": {
     "titleSubstringOrRegex": "Firefox",
+    "output": "file",
     "format": "jpeg",
     "quality": 80,
     "scale": 0.5
@@ -94,7 +90,15 @@ Captures a screenshot of a specific window.
 }
 ```
 
-**Response (3-part structure):**
+**Response (content varies by `output`):**
+
+- `output: "both"` returns **image + file link + metadata**
+- `output: "inline"` returns **image + metadata**
+- `output: "file"` returns **file link + metadata**
+
+Metadata includes `file_path`, which is **null** when no file was written (e.g. `output: "inline"`).
+
+**Response example (`output: "both"`):**
 ```json
 {
   "content": [
@@ -115,13 +119,15 @@ Captures a screenshot of a specific window.
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `source` | string | `"window"` | `"window"` or `"display"` |
+| `sourceType` | string | `"monitor"` | `"monitor"`, `"window"`, or `"virtual"` |
+| `sourceId` | string | `"wayland-default"` | Stable ID used to store/restore portal tokens |
+| `includeCursor` | boolean | false | Include cursor in captures |
 
 **Request:**
 ```json
 {
   "name": "prime_wayland_consent",
-  "arguments": { "source": "window" }
+  "arguments": { "sourceType": "monitor", "sourceId": "wayland-default", "includeCursor": false }
 }
 ```
 
@@ -158,10 +164,10 @@ sequenceDiagram
     MCP->>OS: EnumWindows / EWMH
     OS-->>MCP: window list
     MCP-->>Agent: [{id, title, class}...]
-    Agent->>MCP: capture_window {title: "Notepad"}
+    Agent->>MCP: capture_window {title: "Notepad", output: "file"}
     MCP->>OS: WGC / xcap
     OS-->>MCP: raw pixels
-    MCP-->>Agent: {image, file_path}
+    MCP-->>Agent: {file_link, metadata}
 ```
 
 ### Wayland Capture
@@ -183,10 +189,10 @@ sequenceDiagram
     MCP-->>Agent: {status: "success"}
     
     Note over Agent,MCP: Subsequent captures are headless
-    Agent->>MCP: capture_window {title: "Firefox"}
+    Agent->>MCP: capture_window {title: "Firefox", output: "file"}
     MCP->>Portal: Use restore token
     Portal-->>MCP: frame
-    MCP-->>Agent: {image, file_path}
+    MCP-->>Agent: {file_link, metadata}
 ```
 
 ---
@@ -221,7 +227,8 @@ sequenceDiagram
 3. **Use cropping** — reduce payload size, exclude sensitive areas
 4. **Use WebP (default)** — best balance of quality and compression for agent interactions
 5. **Handle token expiry** — Wayland tokens invalidate on compositor restart
-6. **Scale down large captures** — `scale: 0.5` reduces payload by ~75%
+6. **Prefer file output for large captures** — `output: "file"` avoids multi-megabyte base64 payloads
+7. **Scale down large captures** — `scale: 0.5` reduces pixels by ~75%
 
 ---
 

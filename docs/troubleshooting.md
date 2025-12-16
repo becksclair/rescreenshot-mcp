@@ -133,6 +133,7 @@ This is a Windows security feature for Graphics Capture API. It cannot be disabl
 
 **Fix:**
 - Use `scale: 0.5` to reduce frame size
+- Prefer `output: "file"` to avoid large base64 transfers over JSON-RPC
 - Update GPU drivers
 - Close overlay apps (Discord, OBS, GeForce Experience)
 

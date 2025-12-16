@@ -3,9 +3,15 @@
 ## Complete Feature Specification v1.0
 
 **Version:** 1.0
-**Status:** Complete & Production Ready
+**Status:** Historical (implementation has evolved)
 **Last Updated:** 2025-11-29
 **Timeline:** 6 weeks (M0-M6)
+
+> **Note:** This document describes the original v1.0 plan/spec. The current
+> implementation (v0.6.x) has diverged substantially (capability traits replace
+> `CaptureFacade`, Wayland window enumeration is not supported, and `capture_window`
+> supports `output` modes). For the up-to-date tool API and examples, prefer
+> `docs/usage.md` and the Rust code in `crates/screenshot-mcp-server/`.
 
 ---
 
@@ -199,22 +205,25 @@ Opens XDG Desktop Portal for user authorization.
 
 Enumerates available windows.
 
-- **Wayland:** Returns primed sources with synthetic entries
+- **Wayland:** Not supported (security model). Use `prime_wayland_consent` + `capture_window`.
 - **X11:** Returns windows from _NET_CLIENT_LIST with EWMH properties
-- **Windows:** Enumerated via Win32 API (planned M4)
-- **macOS:** Enumerated via Cocoa (planned M5)
+- **Windows:** Enumerated via Win32 API
+- **macOS:** Enumerated via platform APIs (if/when implemented)
 
 #### `capture_window`
 
 Captures a specific window.
 
 **Parameters:**
-- `selector`: Window title/class/exe
-- `format`: PNG (default), WebP, JPEG
-- `quality`: 1-100 (for lossy formats)
+- `titleSubstringOrRegex`: Window title substring or regex (optional)
+- `class`: Window class (optional)
+- `exe`: Executable name (optional)
+- `format`: WebP (default), PNG, JPEG
+- `quality`: 0-100 (for lossy formats)
 - `scale`: 0.1-2.0 (resize factor)
 - `region`: Optional crop region
-- `include_cursor`: Boolean (platform-dependent)
+- `includeCursor`: Boolean (platform-dependent)
+- `output`: "inline", "file", or "both" (default: "both")
 
 ---
 
@@ -238,14 +247,12 @@ MCP Client (Claude/Cursor)
 
 ```rust
 #[async_trait]
-pub trait CaptureFacade: Send + Sync {
-    async fn list_windows(&self) -> Result<Vec<WindowInfo>>;
-    async fn resolve_target(&self, selector: &str) -> Result<WindowHandle>;
-    async fn capture_window(&self, handle: Handle, opts: &Options) -> Result<ImageBuffer>;
-    async fn capture_display(&self, display_id: Option<u32>, opts: &Options) -> Result<ImageBuffer>;
-    fn capabilities(&self) -> Capabilities;
-}
+pub trait CaptureFacade: Send + Sync {}
 ```
+
+> **Implementation note (v0.6.x):** The monolithic `CaptureFacade` has been
+> replaced by capability traits (`WindowEnumerator`, `WindowResolver`,
+> `ScreenCapture`, `WaylandRestoreCapable`) combined in `CompositeBackend`.
 
 ### Tech Stack
 
@@ -281,11 +288,7 @@ All captures support configurable encoding:
 {
   "content": [
     { "type": "image", "mimeType": "image/png", "data": "..." },
-    { "type": "resource", "resource": {
-      "uri": "file:///tmp/screenshot-mcp-1697123456.png",
-      "mimeType": "image/png",
-      "title": "Screenshot 2024-10-13T14:32:15Z"
-    }}
+    { "type": "text", "text": "## Screenshot File Reference\n\n**File:** ...\n" }
   ]
 }
 ```

@@ -18,7 +18,13 @@
 //! let opts = CaptureOptions::builder().format(ImageFormat::Png).build();
 //! let dimensions = (1920, 1080);
 //!
-//! let result = build_capture_result(&image_data, &file_path, &opts, dimensions);
+//! let result = build_capture_result(
+//!     &image_data,
+//!     Some(&file_path),
+//!     &opts,
+//!     dimensions,
+//!     true
+//! );
 //! assert!(!result.is_error.unwrap_or(false));
 //! assert_eq!(result.content.len(), 3); // Image + ResourceLink + Metadata
 //! ```
@@ -132,24 +138,26 @@ pub fn build_resource_link(path: &Path, mime_type: &str, size: u64) -> Content {
 /// Builds a complete MCP capture result with dual-format output
 ///
 /// Creates a comprehensive `CallToolResult` containing:
-/// 1. Inline image content (base64-encoded for immediate preview)
-/// 2. Resource link (file:// URI for persistent access)
+/// 1. Inline image content (optional, base64-encoded for immediate preview)
+/// 2. Resource link (optional, file:// URI for persistent access)
 /// 3. Metadata (JSON with dimensions, format, and file size)
 ///
-/// This dual-format approach allows MCP clients to:
-/// - Display the screenshot immediately via the inline image
-/// - Access the file later via the persistent file link
+/// This flexible approach allows MCP clients to choose between:
+/// - Immediate display (inline image)
+/// - Efficient transfer (file link only)
+/// - Both (dual output)
 ///
 /// # Arguments
 ///
 /// * `image_data` - Raw encoded image bytes (PNG/JPEG/WebP)
-/// * `file_path` - Path where the screenshot was saved
+/// * `file_path` - Optional path where the screenshot was saved
 /// * `opts` - Capture options (contains format information)
 /// * `dimensions` - Image dimensions as (width, height)
+/// * `include_inline_image` - Whether to include the base64 image data
 ///
 /// # Returns
 ///
-/// An MCP `CallToolResult` containing all content and metadata
+/// An MCP `CallToolResult` containing selected content and metadata
 ///
 /// # Examples
 ///
@@ -167,7 +175,14 @@ pub fn build_resource_link(path: &Path, mime_type: &str, size: u64) -> Content {
 ///     .build();
 /// let dimensions = (1920, 1080);
 ///
-/// let result = build_capture_result(&image_data, &file_path, &opts, dimensions);
+/// // Create dual output (both image and file)
+/// let result = build_capture_result(
+///     &image_data,
+///     Some(&file_path),
+///     &opts,
+///     dimensions,
+///     true
+/// );
 ///
 /// // Result should be successful
 /// assert!(!result.is_error.unwrap_or(false));
@@ -177,37 +192,46 @@ pub fn build_resource_link(path: &Path, mime_type: &str, size: u64) -> Content {
 /// ```
 pub fn build_capture_result(
     image_data: &[u8],
-    file_path: &Path,
+    file_path: Option<&Path>,
     opts: &CaptureOptions,
     dimensions: (u32, u32),
+    include_inline_image: bool,
 ) -> CallToolResult {
     // Get MIME type from format
     let mime_type = opts.format.mime_type();
     let file_size = image_data.len() as u64;
 
+    let mut content = Vec::new();
+
     // Build inline image content (for immediate preview)
-    let image_content = build_image_content(image_data, mime_type);
+    if include_inline_image {
+        content.push(build_image_content(image_data, mime_type));
+    }
 
     // Build resource link (for persistent file access)
-    let resource_link = build_resource_link(file_path, mime_type, file_size);
+    if let Some(path) = file_path {
+        content.push(build_resource_link(path, mime_type, file_size));
+    }
 
     // Build metadata as JSON text content
+    let file_path_value = file_path.map(|p| p.to_string_lossy().to_string());
     let metadata = serde_json::json!({
         "dimensions": [dimensions.0, dimensions.1],
         "format": opts.format.to_string(),
         "size_bytes": file_size,
         "quality": opts.quality,
         "scale": opts.scale,
-        "file_path": file_path.to_string_lossy(),
+        // null when no file was written (e.g. output: "inline")
+        "file_path": file_path_value,
     });
 
     let metadata_str = serde_json::to_string_pretty(&metadata)
         .unwrap_or_else(|_| r#"{"error": "Failed to serialize metadata"}"#.to_string());
-    let metadata_content =
-        Content::text(format!("## Capture Metadata\n\n```json\n{}\n```", metadata_str));
+
+    content.push(Content::text(format!("## Capture Metadata\n\n```json\n{}\n```", metadata_str)));
 
     // Combine all content into success result
-    CallToolResult::success(vec![image_content, resource_link, metadata_content])
+    CallToolResult::success(content)
 }
 
 #[cfg(test)]
@@ -324,7 +348,7 @@ mod tests {
             .build();
         let dimensions = (1920, 1080);
 
-        let result = build_capture_result(&image_data, &file_path, &opts, dimensions);
+        let result = build_capture_result(&image_data, Some(&file_path), &opts, dimensions, true);
 
         // Should be successful
         assert!(!result.is_error.unwrap_or(false));
@@ -349,7 +373,7 @@ mod tests {
         let opts = CaptureOptions::default();
         let dimensions = (3840, 2160); // 4K
 
-        let result = build_capture_result(&image_data, &file_path, &opts, dimensions);
+        let result = build_capture_result(&image_data, Some(&file_path), &opts, dimensions, true);
 
         // Extract metadata text
         let metadata_text = result.content[2].as_text().unwrap();
@@ -365,7 +389,7 @@ mod tests {
         let file_path = PathBuf::from("/tmp/test.webp");
         let opts = CaptureOptions::builder().format(ImageFormat::Webp).build();
 
-        let result = build_capture_result(&image_data, &file_path, &opts, (1920, 1080));
+        let result = build_capture_result(&image_data, Some(&file_path), &opts, (1920, 1080), true);
 
         let metadata_text = result.content[2].as_text().unwrap();
         assert!(metadata_text.text.contains("webp"));
@@ -377,7 +401,7 @@ mod tests {
         let file_path = PathBuf::from("/tmp/test.png");
         let opts = CaptureOptions::default();
 
-        let result = build_capture_result(&image_data, &file_path, &opts, (1920, 1080));
+        let result = build_capture_result(&image_data, Some(&file_path), &opts, (1920, 1080), true);
 
         let metadata_text = result.content[2].as_text().unwrap();
         assert!(metadata_text.text.contains("12345"));
@@ -390,19 +414,22 @@ mod tests {
 
         // Test PNG
         let opts_png = CaptureOptions::builder().format(ImageFormat::Png).build();
-        let result_png = build_capture_result(&image_data, &file_path, &opts_png, (1920, 1080));
+        let result_png =
+            build_capture_result(&image_data, Some(&file_path), &opts_png, (1920, 1080), true);
         let image_png = result_png.content[0].as_image().unwrap();
         assert_eq!(image_png.mime_type, "image/png");
 
         // Test JPEG
         let opts_jpeg = CaptureOptions::builder().format(ImageFormat::Jpeg).build();
-        let result_jpeg = build_capture_result(&image_data, &file_path, &opts_jpeg, (1920, 1080));
+        let result_jpeg =
+            build_capture_result(&image_data, Some(&file_path), &opts_jpeg, (1920, 1080), true);
         let image_jpeg = result_jpeg.content[0].as_image().unwrap();
         assert_eq!(image_jpeg.mime_type, "image/jpeg");
 
         // Test WebP
         let opts_webp = CaptureOptions::builder().format(ImageFormat::Webp).build();
-        let result_webp = build_capture_result(&image_data, &file_path, &opts_webp, (1920, 1080));
+        let result_webp =
+            build_capture_result(&image_data, Some(&file_path), &opts_webp, (1920, 1080), true);
         let image_webp = result_webp.content[0].as_image().unwrap();
         assert_eq!(image_webp.mime_type, "image/webp");
     }
@@ -417,7 +444,7 @@ mod tests {
             .scale(0.5)
             .build();
 
-        let result = build_capture_result(&image_data, &file_path, &opts, (1920, 1080));
+        let result = build_capture_result(&image_data, Some(&file_path), &opts, (1920, 1080), true);
 
         let metadata_text = result.content[2].as_text().unwrap();
 
